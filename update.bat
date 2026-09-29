@@ -20,68 +20,69 @@ if errorlevel 1 (
 )
 
 rem 2. Kiem tra Python
+set PY_CMD=python
 where python >nul 2>nul
 if errorlevel 1 (
-    echo [CANH BAO] Khong tim thay Python trong bien moi truong PATH.
-    echo Ban can cai dat Python 3.10+ de chay phan mem.
-    echo.
+    where py >nul 2>nul
+    if not errorlevel 1 (
+        set PY_CMD=py
+    ) else if exist "%LOCALAPPDATA%\Programs\Python\Python312\python.exe" (
+        set "PY_CMD=%LOCALAPPDATA%\Programs\Python\Python312\python.exe"
+    ) else if exist "%LOCALAPPDATA%\Programs\Python\Python310\python.exe" (
+        set "PY_CMD=%LOCALAPPDATA%\Programs\Python\Python310\python.exe"
+    ) else (
+        echo [CANH BAO] Khong tim thay Python trong PATH.
+    )
 )
 
 rem 3. Kiem tra va dong bo tu Git
 set REPO_URL=https://github.com/thincole/checkduet.git
 
-if exist ".git" (
-    echo [*] Dang ket noi va kiem tra ban cap nhat tu GitHub...
-    git remote set-url origin %REPO_URL% 2>nul
-    
-    rem Tam luu thay doi cuc bo neu co
-    git stash --quiet 2>nul
+if not exist ".git" goto INIT_GIT
 
-    git pull origin main
-    if errorlevel 1 (
-        echo.
-        echo [CANH BAO] Qua trinh cap nhat gap xung dot voi file cuc bo.
-        set /p "FORCE_UPDATE=Ban co muon ghi de toan bo theo ban goc GitHub khong? [Y/N]: "
-        if /i "%FORCE_UPDATE%"=="Y" (
-            git fetch origin main
-            git reset --hard origin/main
-            echo [OK] Da dong bo hoan toan ve ban moi nhat tren GitHub!
-        ) else (
-            echo Bo qua dong bo. Giu nguyen ma nguon hien tai tren may nay.
-            pause
-            exit /b 1
-        )
-    ) else (
-        rem Khoi phuc thay doi cuc bo neu co
-        git stash pop --quiet >nul 2>nul
-    )
-) else (
-    echo [*] Chua co cau hinh Git tai thu muc nay. Dang thiet lap ket noi...
-    git init
-    git remote add origin %REPO_URL%
+echo [*] Dang ket noi va kiem tra ban cap nhat tu GitHub...
+git remote set-url origin %REPO_URL% 2>nul
+git stash --quiet 2>nul
+git pull origin main
+if errorlevel 1 goto PULL_CONFLICT
+git stash pop --quiet >nul 2>nul
+goto POST_SYNC
+
+:PULL_CONFLICT
+echo.
+echo [CANH BAO] Qua trinh cap nhat gap xung dot voi file cuc bo.
+set /p "FORCE_UPDATE=Ban co muon ghi de toan bo theo ban goc GitHub khong? [Y/N]: "
+if /i "%FORCE_UPDATE%"=="Y" (
     git fetch origin main
-    if errorlevel 1 (
-        echo [LOI] Khong the tai ma nguon tu %REPO_URL%.
-        echo Vui long kiem tra ket noi mang hoac repository GitHub.
-        pause
-        exit /b 1
-    )
     git reset --hard origin/main
-    git branch -M main
-    git branch --set-upstream-to=origin/main main 2>nul
+    echo [OK] Da dong bo hoan toan ve ban moi nhat tren GitHub!
+    goto POST_SYNC
+) else (
+    echo Bo qua dong bo. Giu nguyen ma nguon hien tai tren may nay.
+    pause
+    exit /b 1
 )
 
+:INIT_GIT
+echo [*] Chua co cau hinh Git tai thu muc nay. Dang thiet lap ket noi...
+git init
+git remote add origin %REPO_URL%
+git fetch origin main
+if errorlevel 1 (
+    echo [LOI] Khong the tai ma nguon tu %REPO_URL%.
+    echo Vui long kiem tra ket noi mang hoac repository GitHub.
+    pause
+    exit /b 1
+)
+git reset --hard origin/main
+git branch -M main
+git branch --set-upstream-to=origin/main main 2>nul
+
+:POST_SYNC
 rem 4. Dam bao cac thu muc can thiet
 if not exist "data" mkdir "data"
 if not exist "results" mkdir "results"
 if not exist "debug" mkdir "debug"
-
-if not exist "settings.json" (
-    if exist "settings.example.json" (
-        echo [*] Khoi tao settings.json tu settings.example.json...
-        copy "settings.example.json" "settings.json" >nul
-    )
-)
 
 rem 5. Doc phien ban hien tai
 set "CURRENT_VER=1.1"
@@ -90,13 +91,10 @@ if exist "version.txt" (
 )
 
 rem 6. Cap nhat thu vien Python
-where python >nul 2>nul
-if not errorlevel 1 (
-    if exist "requirements.txt" (
-        echo.
-        echo [*] Kiem tra va cai dat thu vien can thiet (PyQt6, requests...)...
-        python -m pip install -r requirements.txt --quiet
-    )
+if exist "requirements.txt" (
+    echo.
+    echo [*] Kiem tra va cai dat thu vien can thiet...
+    %PY_CMD% -m pip install -r requirements.txt --quiet
 )
 
 echo.

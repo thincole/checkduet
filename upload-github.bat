@@ -38,10 +38,10 @@ if errorlevel 1 (
     )
 )
 
-rem 3. Thiet lap thong tin Git user neu chua co (tranh loi unable to auto-detect email)
+rem 3. Thiet lap thong tin Git user neu chua co
 git config user.name >nul 2>nul
 if errorlevel 1 (
-    echo [*] Thiet lap thong tin Git user: thincole...
+    echo [*] Thiet lap thong tin Git user mac dinh: thincole...
     git config user.name "thincole"
     git config user.email "thincole@users.noreply.github.com"
 )
@@ -106,29 +106,33 @@ rem 9. Day code len GitHub
 echo.
 echo [*] Dang day code len GitHub branch main (https://github.com/thincole/checkduet)...
 git push -u origin main
-if errorlevel 1 (
-    echo.
-    echo ================================================================
-    echo [CANH BAO] Push that bai! Co the do:
-    echo 1. Ban chua dang nhap GitHub tren may nay hoac khong co quyen push.
-    echo 2. Tren GitHub da co commit gay lech nhanh (non-fast-forward).
-    echo ================================================================
-    echo.
-    set /p "RETRY_REBASE=Ban co muon thu keo ve voi rebase roi day lai khong? [Y/N]: "
-    if /i "%RETRY_REBASE%"=="Y" (
-        git pull --rebase origin main
-        git push -u origin main
-        if errorlevel 1 (
-            echo [LOI] Van khong the push len GitHub. Vui long kiem tra quyen repository.
-            pause
-            exit /b 1
-        )
-    ) else (
+if errorlevel 1 goto PUSH_FAILED
+goto PUSH_SUCCESS
+
+:PUSH_FAILED
+echo.
+echo ================================================================
+echo [CANH BAO] Push that bai! Co the do:
+echo 1. Ban chua dang nhap GitHub tren may nay hoac khong co quyen push.
+echo 2. Tren GitHub da co commit gay lech nhanh (non-fast-forward).
+echo ================================================================
+echo.
+set /p "RETRY_REBASE=Ban co muon thu keo ve voi rebase roi day lai khong? [Y/N]: "
+if /i "%RETRY_REBASE%"=="Y" (
+    git pull --rebase origin main
+    git push -u origin main
+    if errorlevel 1 (
+        echo [LOI] Van khong the push len GitHub. Vui long kiem tra quyen repository.
         pause
         exit /b 1
     )
+    goto PUSH_SUCCESS
+) else (
+    pause
+    exit /b 1
 )
 
+:PUSH_SUCCESS
 echo.
 echo ================================================================
 echo  [THANH CONG] Da day phien ban v%TARGET_VER% len GitHub thanh cong!
