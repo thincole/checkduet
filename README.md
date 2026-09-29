@@ -14,7 +14,7 @@ Phần mềm kiểm tra quyền Duet / Stitch của video Shopee, tìm kiếm vi
 
 2. **🔥 Viral Finder**:
    - Tự động cào và phát hiện video viral theo từ khóa/hashtag và creator liên quan.
-   - Hỗ trợ chạy đa luồng (Multi-threading) với cơ chế xoay vòng nhiều tài khoản Shopee Cookie.
+   - Hỗ trợ chạy đa luồng (Multi-threading) với cơ chế xoay vòng danh sách Shopee Cookie.
    - Chấm điểm và lọc video theo tiêu chí: Lượt xem/ngày, tỷ lệ tương tác, thời gian đăng.
 
 3. **🪟 Thống kê Cửa sổ Sản phẩm**:
@@ -31,28 +31,26 @@ Phần mềm kiểm tra quyền Duet / Stitch của video Shopee, tìm kiếm vi
 
 ---
 
-## 🚀 Hướng dẫn cài đặt & Sử dụng
+## 🚀 Hướng dẫn trên MÁY MỚI (Cực kỳ đơn giản)
 
-### 1. Yêu cầu hệ thống
-- Hệ điều hành: Windows 10 / 11
-- Python: Phiên bản 3.10 trở lên (Tick chọn **Add Python to PATH** khi cài đặt)
-- Git: Cần cài đặt Git (tải tại [git-scm.com](https://git-scm.com/)) để sử dụng tính năng tự động cập nhật.
+### 1. Tải code về máy mới
+- **Cách 1 (Nhanh nhất)**: Mở CMD gõ:
+  ```cmd
+  git clone https://github.com/thincole/checkduet.git
+  ```
+- **Cách 2**: Vào https://github.com/thincole/checkduet bấm **Code** -> **Download ZIP** và giải nén.
 
-### 2. Khởi chạy phần mềm
-- Nhấp đúp vào tệp **`run.bat`**.
-- Script sẽ tự động kiểm tra và cài đặt các thư viện cần thiết (`PyQt6`, `requests`, `urllib3`, `qrcode`, `gspread`) và mở giao diện ứng dụng.
-
-### 3. Cập nhật mã nguồn trên các máy trạm
-- Nhấp đúp vào tệp **`update.bat`**.
-- Script sẽ tự động kết nối với GitHub repository, kéo mã nguồn mới nhất về, cập nhật thư viện và báo số phiên bản hiện tại.
-
-### 4. Đẩy mã nguồn mới lên GitHub (Dành cho máy chính)
-- Nhấp đúp vào tệp **`upload-github.bat`**.
-- Script sẽ tự động tăng số phiên bản (ví dụ từ `1.1` lên `1.2`, `1.3`...), tự động loại trừ các file cookie cá nhân / database nặng, và đẩy code lên repository:
-  👉 `https://github.com/thincole/checkduet`
+### 2. Cài đặt tự động 1-Click
+- Vào thư mục vừa tải, nhấp đúp vào:
+  👉 **`install.bat`**
+- File này sẽ **tự động làm toàn bộ mọi thứ**:
+  1. Tự tải và cài đặt Python (tự động bật PATH).
+  2. Tự tải và cài đặt Git.
+  3. Tự cài đặt toàn bộ thư viện cần thiết (`PyQt6`, `requests`, `qrcode`, `gspread`...).
+  4. Tự tạo lối tắt (Shortcut) **Shopee Duet Checker** ngoài màn hình Desktop.
+  5. Mở phần mềm lên sử dụng ngay.
 
 ---
 
-## 🔒 Bảo mật dữ liệu
-- File `settings.json` (chứa Cookie tài khoản Shopee, API key, đường dẫn Google Sheet credential) và database SQLite `data/*.db` đã được cấu hình trong `.gitignore` nhằm đảm bảo **an toàn tuyệt đối**, không rò rỉ cookie ra bên ngoài khi đẩy code lên GitHub.
-- Mẫu cấu hình chuẩn được cung cấp tại `settings.example.json`.
+## 🔄 Cập nhật phiên bản mới trên các máy khác
+- Nhấp đúp vào **`update.bat`** để tự động kéo code mới nhất từ GitHub về.
