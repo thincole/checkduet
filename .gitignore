@@ -1,0 +1,35 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+
+# File backup dữ liệu cũ (không đẩy lên git)
+data/*backup*
+data/*.db-wal
+data/*.db-shm
+*.har
+
+# Nhật ký hoạt động
+log.txt
+*.log
+
+# File debug & kết quả xuất dữ liệu
+debug/*
+!debug/.gitkeep
+results/*
+!results/.gitkeep
+
+# IDE & Hệ điều hành
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
