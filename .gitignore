@@ -1,3 +1,6 @@
+# File quan tri chi danh rieng cho may chu (khong day len GitHub)
+upload-github.bat
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -8,23 +11,23 @@ env/
 venv/
 .venv/
 
-# File backup dữ liệu cũ (không đẩy lên git)
+# File backup du lieu cu (khong day len git)
 data/*backup*
 data/*.db-wal
 data/*.db-shm
 *.har
 
-# Nhật ký hoạt động
+# Nhat ky hoat dong
 log.txt
 *.log
 
-# File debug & kết quả xuất dữ liệu
+# File debug & ket qua xuat du lieu
 debug/*
 !debug/.gitkeep
 results/*
 !results/.gitkeep
 
-# IDE & Hệ điều hành
+# IDE & He dieu hanh
 .vscode/
 .idea/
 *.swp
