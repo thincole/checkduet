@@ -32,4 +32,25 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        try:
+            crash_file = os.path.join(os.path.dirname(__file__), "crash.log")
+            with open(crash_file, "w", encoding="utf-8") as f:
+                traceback.print_exc(file=f)
+        except Exception:
+            pass
+        try:
+            from PyQt6.QtWidgets import QApplication, QMessageBox
+            _app = QApplication.instance() or QApplication(sys.argv)
+            QMessageBox.critical(
+                None,
+                "Lỗi khởi động",
+                f"Ứng dụng gặp lỗi khi khởi động:\n\n{e}\n\nXem chi tiết tại file crash.log"
+            )
+        except Exception:
+            pass
+        sys.exit(1)
