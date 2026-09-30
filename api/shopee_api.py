@@ -516,11 +516,23 @@ class ShopeeAPI:
                               if uid and str(uid) != str(profile_id)})
 
         product = self._main_product(content)
+        prod_items = self._all_products(content)
+        prod_urls = []
+        for sid, iid, _name in prod_items:
+            if sid and iid:
+                u = f"{self.base_host}/product/{sid}/{iid}"
+                if u not in prod_urls:
+                    prod_urls.append(u)
+        main_u = product.get("product_url")
+        if main_u and main_u not in prod_urls:
+            prod_urls.insert(0, main_u)
 
         video_id = video.get("video_id") or meta.get("post_id") or ""
         return {
             **product,
-            "product_items": self._all_products(content),
+            "product_items": prod_items,
+            "product_urls":  prod_urls,
+            "all_product_urls": "\n".join(prod_urls),
             "related_ids":   related_ids,
             "hashtags":      hashtags,
             "profile_id":    profile_id,

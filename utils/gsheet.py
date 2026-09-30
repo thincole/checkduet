@@ -43,6 +43,46 @@ def _url(url) -> str:
     return url if url.startswith(("https://", "http://")) else ""
 
 
+def _format_product_urls(v: dict) -> str:
+    """
+    Tạo chuỗi chứa tất cả link sản phẩm trong video, mỗi link 1 dòng.
+    Được ghi vào cùng 1 ô trên Google Sheets.
+    """
+    all_u = v.get("all_product_urls")
+    if all_u and isinstance(all_u, str) and all_u.strip():
+        return all_u.strip()
+
+    urls_list = v.get("product_urls")
+    if urls_list and isinstance(urls_list, (list, tuple)):
+        clean = [str(u).strip() for u in urls_list if str(u).strip()]
+        if clean:
+            return "\n".join(clean)
+
+    items = v.get("product_items") or []
+    urls = []
+    base_host = "https://shopee.vn"
+    main_u = str(v.get("product_url") or "").strip()
+    if main_u:
+        m = re.match(r"(https?://[^/]+)", main_u)
+        if m:
+            base_host = m.group(1)
+
+    for it in items:
+        if isinstance(it, (list, tuple)) and len(it) >= 2:
+            sid, iid = str(it[0]).strip(), str(it[1]).strip()
+            if sid and iid:
+                url = f"{base_host}/product/{sid}/{iid}"
+                if url not in urls:
+                    urls.append(url)
+
+    if main_u and main_u not in urls:
+        urls.insert(0, main_u)
+
+    if urls:
+        return "\n".join(urls)
+    return _url(main_u)
+
+
 def to_rows(videos: list) -> list:
     rows = []
     for v in videos:
@@ -61,7 +101,7 @@ def to_rows(videos: list) -> list:
             int(v.get("product_price") or 0),
             int(v.get("product_sold") or 0),
             _url(v.get("share_url")),
-            _url(v.get("product_url")),
+            _format_product_urls(v),
         ])
     return rows
 

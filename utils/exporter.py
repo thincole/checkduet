@@ -22,15 +22,30 @@ def export_csv(results: list, export_dir: str = "results", prefix: str = "duet_c
         "profile_id", "video_id", "allow_duet", "allow_stitch",
         "play_count", "like_count", "comment_count", "share_count",
         "views_per_day", "engagement", "post_date",
-        "description", "product_name", "product_url", "product_price", "product_sold",
-        "product_count", "share_url", "video_url", "create_time",
+        "description", "product_name", "product_url", "all_product_urls",
+        "product_price", "product_sold", "product_count",
+        "share_url", "video_url", "create_time",
     ]
 
     with open(path, "w", newline="", encoding="utf-8-sig") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()
         for row in results:
-            writer.writerow(row)
+            r = dict(row)
+            if not r.get("all_product_urls"):
+                urls = list(r.get("product_urls") or [])
+                if not urls:
+                    for it in (r.get("product_items") or []):
+                        if isinstance(it, (list, tuple)) and len(it) >= 2:
+                            sid, iid = str(it[0]).strip(), str(it[1]).strip()
+                            if sid and iid:
+                                u = f"https://shopee.vn/product/{sid}/{iid}"
+                                if u not in urls:
+                                    urls.append(u)
+                if not urls and r.get("product_url"):
+                    urls.append(r["product_url"])
+                r["all_product_urls"] = "\n".join(urls)
+            writer.writerow(r)
 
     return path
 

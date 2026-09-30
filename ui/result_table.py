@@ -205,11 +205,27 @@ class ResultTable(QTableWidget):
         act_open  = menu.addAction("🔗 Mở link video")
         act_copy  = menu.addAction("📋 Copy link")
         act_copy_id = menu.addAction("📋 Copy Video ID")
-        act_open_sp = act_copy_sp = None
-        if v.get("product_url"):
+        act_open_sp = act_copy_sp = act_copy_all_sp = None
+
+        prod_urls = list(v.get("product_urls") or [])
+        if not prod_urls:
+            for it in (v.get("product_items") or []):
+                if isinstance(it, (list, tuple)) and len(it) >= 2:
+                    sid, iid = str(it[0]).strip(), str(it[1]).strip()
+                    if sid and iid:
+                        u = f"https://shopee.vn/product/{sid}/{iid}"
+                        if u not in prod_urls:
+                            prod_urls.append(u)
+        main_u = v.get("product_url")
+        if main_u and main_u not in prod_urls:
+            prod_urls.insert(0, main_u)
+
+        if prod_urls:
             menu.addSeparator()
             act_open_sp = menu.addAction("🛒 Mở link sản phẩm")
             act_copy_sp = menu.addAction("📋 Copy link sản phẩm")
+            if len(prod_urls) > 1:
+                act_copy_all_sp = menu.addAction(f"📋 Copy tất cả link SP ({len(prod_urls)} sản phẩm)")
         menu.addSeparator()
         act_copy_all = menu.addAction("📋 Copy tất cả link duet")
 
@@ -218,9 +234,11 @@ class ResultTable(QTableWidget):
         if action is None:
             return
         if action == act_open_sp:
-            webbrowser.open(v["product_url"])
+            webbrowser.open(main_u or prod_urls[0])
         elif action == act_copy_sp:
-            QApplication.clipboard().setText(v["product_url"])
+            QApplication.clipboard().setText(main_u or prod_urls[0])
+        elif action == act_copy_all_sp:
+            QApplication.clipboard().setText("\n".join(prod_urls))
         elif action == act_open:
             webbrowser.open(v.get("share_url", ""))
         elif action == act_copy:
