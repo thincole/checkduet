@@ -120,6 +120,12 @@ class WindowsStore:
         self.save()
         return self._conn.execute("SELECT COUNT(DISTINCT video_id) FROM product_videos").fetchone()[0]
 
+    def delete_video(self, video_id: str):
+        vid = str(video_id or "")
+        self._pend_link = {(iid, v) for iid, v in self._pend_link if v != vid}
+        self._conn.execute("DELETE FROM product_videos WHERE video_id=?", (vid,))
+        self._conn.commit()
+
     def clear(self):
         self._pend_prod.clear()
         self._pend_link.clear()

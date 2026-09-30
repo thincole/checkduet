@@ -311,6 +311,7 @@ class MainWindow(QMainWindow):
         t_lay = QVBoxLayout(grp_table)
         self.result_table = ResultTable()
         self.result_table.row_count_changed.connect(self._update_stats)
+        self.result_table.videos_deleted.connect(self._on_scanner_videos_deleted)
         t_lay.addWidget(self.result_table)
         bottom.addWidget(grp_table)
 
@@ -664,8 +665,21 @@ class MainWindow(QMainWindow):
             f"Video: {total}  |  ✅ Duet: {allowed}  |  ❌ No duet: {denied}"
         )
         self.status.showMessage(
-            f"Đang scan... {total} video tìm thấy, {allowed} cho phép duet."
+            f"Video: {total} | {allowed} cho phép duet."
         )
+
+    def _on_scanner_videos_deleted(self, deleted_videos: list):
+        del_ids = {v.get("video_id") for v in deleted_videos if v.get("video_id")}
+        self._results = [v for v in self._results if v.get("video_id") not in del_ids]
+        for v in deleted_videos:
+            vid = v.get("video_id")
+            if vid:
+                if self.video_store:
+                    self.video_store.delete_video(vid, self._active_country)
+                if self.windows_store:
+                    self.windows_store.delete_video(vid)
+        self._update_stats(self.result_table.rowCount())
+        self.status.showMessage(f"🗑 Đã xóa {len(deleted_videos)} video.", 3000)
 
     # ──────────────────────────────────────────────────────────
     # Scan

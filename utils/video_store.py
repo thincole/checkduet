@@ -99,6 +99,15 @@ class VideoStore:
         self._conn.commit()
         self._pending.clear()
 
+    def delete_video(self, vid: str, country: str):
+        cc = (country or "VN").upper()
+        vid = str(vid or "")
+        key = (cc, vid)
+        if key in self._pending:
+            del self._pending[key]
+        self._conn.execute("DELETE FROM videos WHERE country=? AND video_id=?", (cc, vid))
+        self._conn.commit()
+
     def clear(self, country: str):
         cc = (country or "VN").upper()
         self._pending = {k: v for k, v in self._pending.items() if k[0] != cc}

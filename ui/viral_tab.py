@@ -267,6 +267,7 @@ class ViralTab(QWidget):
         grp_t = self.grp_table
         t_lay = QVBoxLayout(grp_t)
         self.table = ResultTable(columns=VIRAL_COLUMNS)
+        self.table.videos_deleted.connect(self._on_viral_videos_deleted)
         t_lay.addWidget(self.table)
         bottom.addWidget(grp_t)
 
@@ -449,6 +450,20 @@ class ViralTab(QWidget):
         self.progress_bar.setVisible(False)
         self._refresh()
         self.log_status(f"🔥 Xong: {total} video mới quét, kho có {len(self._videos_by_id)} video.")
+
+    def _on_viral_videos_deleted(self, deleted_videos: list):
+        country = ((self.get_runtime() or {}).get("country", "VN")) if self.get_runtime else "VN"
+        for v in deleted_videos:
+            vid = v.get("video_id")
+            if vid:
+                if vid in self._videos_by_id:
+                    del self._videos_by_id[vid]
+                if self.video_store:
+                    self.video_store.delete_video(vid, country)
+                if self.windows_store:
+                    self.windows_store.delete_video(vid)
+        self._refresh()
+        self.log_status(f"🗑 Đã xóa {len(deleted_videos)} video khỏi danh sách.")
 
     def _on_mode_changed(self, *_):
         """Đổi mục tiêu: đặt lại lọc duet và cách xếp cho phù hợp, rồi lọc lại bảng."""

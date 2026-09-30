@@ -5,7 +5,7 @@ Result Table Widget — QTableWidget hiển thị kết quả video
 import webbrowser
 from PyQt6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QHeaderView,
-    QAbstractItemView, QMenu, QApplication,
+    QAbstractItemView, QMenu, QApplication, QMessageBox,
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QCursor
@@ -60,7 +60,8 @@ class NumericItem(QTableWidgetItem):
 
 
 class ResultTable(QTableWidget):
-    row_count_changed = pyqtSignal(int)  # tổng số dòng
+    row_count_changed = pyqtSignal(int)   # tổng số dòng
+    videos_deleted    = pyqtSignal(list)  # danh sách video dict bị xóa
 
     def __init__(self, parent=None, columns: list | None = None):
         super().__init__(parent)
@@ -229,11 +230,22 @@ class ResultTable(QTableWidget):
         menu.addSeparator()
         act_copy_all = menu.addAction("📋 Copy tất cả link duet")
 
+        # Nút xóa dòng
+        menu.addSeparator()
+        selected_rows = sorted(set(idx.row() for idx in self.selectedIndexes()), reverse=True)
+        if row >= 0 and row not in selected_rows:
+            selected_rows = [row]
+        count = len(selected_rows)
+        del_label = f"🗑 Xóa {count} video đã chọn" if count > 1 else "🗑 Xóa video này"
+        act_delete = menu.addAction(del_label)
+
         action = menu.exec(QCursor.pos())
 
         if action is None:
             return
-        if action == act_open_sp:
+        if action == act_delete:
+            self.delete_selected_rows(selected_rows)
+        elif action == act_open_sp:
             webbrowser.open(main_u or prod_urls[0])
         elif action == act_copy_sp:
             QApplication.clipboard().setText(main_u or prod_urls[0])
@@ -250,3 +262,45 @@ class ResultTable(QTableWidget):
                 x["share_url"] for x in self._all_data if x.get("allow_duet")
             )
             QApplication.clipboard().setText(urls)
+
+    def delete_selected_rows(self, rows: list[int] | None = None):
+        """Xóa các dòng được chọn khỏi bảng và phát tín hiệu videos_deleted."""
+        if rows is None:
+            rows = sorted(set(idx.row() for idx in self.selectedIndexes()), reverse=True)
+        if not rows:
+            return
+
+        count = len(rows)
+        msg = f"Bạn có chắc muốn xóa {count} video đã chọn không?" if count > 1 else "Bạn có chắc muốn xóa video này không?"
+        ret = QMessageBox.question(
+            self, "Xác nhận xóa", msg,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if ret != QMessageBox.StandardButton.Yes:
+            return
+
+        deleted_videos = []
+        for r in rows:
+            v = self._row_data(r)
+            if v:
+                deleted_videos.append(v)
+
+        del_ids = {v.get("video_id") for v in deleted_videos if v.get("video_id")}
+        self._all_data = [v for v in self._all_data if v.get("video_id") not in del_ids]
+
+        sorting = self.isSortingEnabled()
+        self.setSortingEnabled(False)
+        for r in rows:
+            self.removeRow(r)
+        self.setSortingEnabled(sorting)
+
+        self.row_count_changed.emit(self.rowCount())
+        if deleted_videos:
+            self.videos_deleted.emit(deleted_videos)
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Delete:
+            self.delete_selected_rows()
+        else:
+            super().keyPressEvent(event)
