@@ -152,6 +152,8 @@ class ScannerWorker(QThread):
                     f"  ⚠️ Không tìm thấy shop '{profile_id}'. "
                     "Hãy nhập link profile, ID hoặc đúng username shop."
                 )
+                if self.api.last_error:
+                    self.progress.emit(f"  ❌ {self.api.last_error}")
                 return
             profile_id = resolved
         if profile_id in self._scanned_creators:
@@ -172,8 +174,9 @@ class ScannerWorker(QThread):
         if self.api.last_error:
             self.progress.emit(f"  ❌ {self.api.last_error}")
         allow, deny = self._emit(videos)
+        icon = "⚠️" if (self.api.last_error and not videos) else "✅"
         self.shop_done.emit(profile_id, allow + deny, allow, deny)
-        self.progress.emit(f"  ✅ {allow + deny} video | ✅ Duet: {allow} | ❌ No duet: {deny}")
+        self.progress.emit(f"  {icon} {allow + deny} video | ✅ Duet: {allow} | ❌ No duet: {deny}")
 
     def _do_tag(self, n: int, tag_id: str, name: str):
         self._scanned_tags.add(tag_id)
@@ -185,7 +188,8 @@ class ScannerWorker(QThread):
         if self.api.last_error:
             self.progress.emit(f"  ❌ {self.api.last_error}")
         allow, deny = self._emit(videos)
-        self.progress.emit(f"  ✅ {allow + deny} video mới | ✅ Duet: {allow}")
+        icon = "⚠️" if (self.api.last_error and not videos) else "✅"
+        self.progress.emit(f"  {icon} {allow + deny} video mới | ✅ Duet: {allow}")
 
     def _emit(self, videos: list) -> tuple[int, int]:
         """Phát video chưa thấy, cập nhật điểm lan. Trả về (allow, deny)."""

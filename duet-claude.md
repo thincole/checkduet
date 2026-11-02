@@ -125,7 +125,7 @@ UI (Scanner / Viral Finder)
   - ✅ Đã kiểm tra bằng phản hồi giả lập: A (captcha) → B (hết hạn) → C (tốt) → quét tiếp bình thường.
 - **Bắt buộc:** thay `shopee_app_version` trong cookie cho khớp với `appver` của User-Agent. Nếu lệch (ví dụ cookie `29531`, UA `33731`), timeline trả `{"code":400002}`.
   ```python
-  cookie = re.sub(r"shopee_app_version=\d+", "shopee_app_version=33731", cookie)
+  cookie = re.sub(r"shopee_app_version=\d+", "shopee_app_version=29531", cookie)
   ```
 
 ### 3.2. Sign API
@@ -148,7 +148,7 @@ Tên của 3 header chữ ký (dạng 8 ký tự hex) **thay đổi sau mỗi l�
   "Content-Type": "application/json; charset=UTF-8",
   "Host": "sv.shopee.vn",                 # theo REGIONS[country]["video_domain"]
   "language": "vi",
-  "User-Agent": "Android app Shopee appver=33731 app_type=1",
+  "User-Agent": "Android app Shopee appver=29531 app_type=1",
   "X-SAP-Type": "1",
   "cache-control": "no-cache, no-store",
   "Cookie": "<cookie đã thay app_version>",
@@ -563,11 +563,15 @@ while chưa dừng:
 | 5 | Lỗi API bị nuốt, báo "0 video" | `last_error` + log rõ từng loại lỗi |
 | 6 | Cookie/delay chưa bấm Lưu thì không có tác dụng | `_runtime()` đọc trực tiếp giá trị trên UI |
 | 7 | Tham số `userid`, thiếu chữ ký, sai header | Làm lại theo tool gốc (`request_user_id`, Sign API, `X-SAP-Type`...) |
-| 8 | `400002` | Thay `shopee_app_version` trong cookie thành 33731 |
+| 8 | `400002` | Cookie và User-Agent phải cùng `shopee_app_version` (hiện 29531, theo cookie mobile) |
 | 9 | Đọc sai `data.list` / `data.page`, sai field video | Làm lại theo JSON thật |
 | 10 | Link rút gọn → cùng ID `1448992801` | Theo redirect + unquote, bỏ đọc HTML, bỏ `shareUserId` |
 | 11 | Username không ra ID | Dùng `shop/get_shop_base` |
 | 12 | Hashtag nguồn bị lọc mất (coi `#` là comment) | `_parse_tags` không dùng `_lines` |
+| 13 | 2026-11: HTTP 418 `90309999` hàng loạt dù cookie còn sống | Shopee chặn appver 33731. Đổi appver sang 29531 (khớp cookie mobile). Feed hashtag chạy lại bình thường |
+| 14 | Log hiện `✅ 0 video` ngay sau dòng lỗi; username bị chặn báo "không tìm thấy shop" | Hiện `⚠️` khi lượt quét lỗi; báo rõ Shopee đang chặn tra cứu username / từ chối `timeline/me` |
+
+**Còn tồn tại (2026-11-02):** `GET /api/v2/timeline/me` (quét theo creator, tab Scanner) trả `code 400002` với appver 29531, còn appver mới hơn bị 418 — chưa có cách khắc phục phía app. `shop/get_shop_base` (đổi username → ID) bị anti-bot 403 `90309999`: dùng ID số hoặc link `…/profile/<ID>`.
 
 ---
 
@@ -594,7 +598,7 @@ def get_signature(self, url: str, body: str = "") -> dict:
 ### 14.2. GET có ký + kiểm tra lỗi
 ```python
 def _signed_get(self, url: str, debug_name: str) -> dict | None:
-    cookie = re.sub(r"shopee_app_version=\d+", "shopee_app_version=33731", self.cookie)
+    cookie = re.sub(r"shopee_app_version=\d+", "shopee_app_version=29531", self.cookie)
     headers = timeline_headers(cookie, country=self.country)
     headers["client-request-id"] = str(uuid.uuid4())
     headers.update(self.get_signature(url))

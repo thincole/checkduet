@@ -155,6 +155,8 @@ class MultiScanWorker(QThread):
             resolved = api.resolve_short_link(profile_id)
             if not resolved:
                 self.progress.emit(f"  ⚠️ Không tìm thấy shop '{profile_id}'.")
+                if api.last_error:
+                    self.progress.emit(f"  ❌ {api.last_error}")
                 return
             with self.lock:
                 if resolved in self._scanned_creators:
@@ -170,7 +172,8 @@ class MultiScanWorker(QThread):
         if api.last_error:
             self.progress.emit(f"  ❌ {api.last_error}")
         allow, deny = self._emit(videos)
-        self.progress.emit(f"  ✅ {label}: {allow + deny} video | ✅ Duet: {allow}")
+        icon = "⚠️" if (api.last_error and not videos) else "✅"
+        self.progress.emit(f"  {icon} {label}: {allow + deny} video | ✅ Duet: {allow}")
 
     def _do_tag(self, api, tag_id, name):
         self.progress.emit(f"#️⃣ Hashtag: {name}")
@@ -179,7 +182,8 @@ class MultiScanWorker(QThread):
         if api.last_error:
             self.progress.emit(f"  ❌ {api.last_error}")
         allow, deny = self._emit(videos)
-        self.progress.emit(f"  ✅ {name}: {allow + deny} video mới | ✅ Duet: {allow}")
+        icon = "⚠️" if (api.last_error and not videos) else "✅"
+        self.progress.emit(f"  {icon} {name}: {allow + deny} video mới | ✅ Duet: {allow}")
 
     def _emit(self, videos):
         """Phát video chưa thấy, cập nhật điểm lan (an toàn luồng). Trả về (allow, deny)."""

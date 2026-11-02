@@ -1,6 +1,6 @@
 """
 Shopee API Headers
-User-Agent giả lập Android app Shopee (appver=33731) và Desktop Web
+User-Agent giả lập Android app Shopee (appver=29531, khớp shopee_app_version trong cookie mobile) và Desktop Web
 Hỗ trợ đa quốc gia: VN, PH, ID, TH, MY, SG
 """
 

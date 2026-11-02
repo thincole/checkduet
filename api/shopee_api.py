@@ -183,11 +183,18 @@ class ShopeeAPI:
         url = (f"{self.base_host}/api/v4/shop/get_shop_base?entry_point=ShopByPDP"
                f"&need_cancel_rate=true&request_source=shop_home_page"
                f"&username={quote(username)}&version=1")
+        self.last_error = ""
         try:
-            data = requests.get(url, headers=web_headers(self.cookie, country=self.country), timeout=15).json()
+            resp = requests.get(url, headers=web_headers(self.cookie, country=self.country), timeout=15)
+            data = resp.json()
         except Exception:
             return ""
-        return str((data.get("data") or {}).get("userid") or "")
+        userid = str((data.get("data") or {}).get("userid") or "")
+        if not userid and data.get("error") == 90309999:
+            # Shopee trả về lỗi anti-bot (không phải "shop không tồn tại")
+            self.last_error = (f"Shopee đang chặn tra cứu username (HTTP {resp.status_code}, anti-bot). "
+                               "Hãy nhập ID số hoặc link profile (…/profile/<ID>) thay vì username.")
+        return userid
 
     # ------------------------------------------------------------------
     # Tìm kiếm shop/creator theo keyword
@@ -389,6 +396,9 @@ class ShopeeAPI:
             return None, ("bị chặn" if self.sign_api_key and self.cookie else "")
         if data.get("code") not in (0, None):
             self.last_error = f"Shopee trả lỗi code={data.get('code')} {data.get('msg') or ''}".strip()
+            if data.get("code") == 400002 and "/timeline/me" in url:
+                self.last_error += (" — Shopee từ chối endpoint quét theo creator (timeline/me) với phiên bản app "
+                                    "hiện tại. Không phải lỗi cookie; quét theo hashtag (Viral Finder) vẫn dùng được.")
             return None, ""
         return data, ""
 
