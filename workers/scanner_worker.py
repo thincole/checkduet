@@ -50,6 +50,8 @@ class ScannerWorker(QThread):
         self.crawl_hashtags = crawl_hashtags
         self.credit_budget  = credit_budget
         self._stop       = False
+        self._tl_fail    = 0       # số creator liên tiếp bị timeline/me từ chối (400002)
+        self._creators_off = False  # đã tự tắt quét creator để khỏi tốn credit vô ích
 
     def stop(self):
         self._stop = True
@@ -104,6 +106,8 @@ class ScannerWorker(QThread):
                 break
 
             task = None
+            if self._creators_off:
+                seed_creators.clear()
             if seed_creators:
                 pid, label = seed_creators.pop(0)
                 task = ("creator", pid, label or pid)
@@ -173,10 +177,23 @@ class ScannerWorker(QThread):
         )
         if self.api.last_error:
             self.progress.emit(f"  ❌ {self.api.last_error}")
+        self._track_timeline(videos)
         allow, deny = self._emit(videos)
         icon = "⚠️" if (self.api.last_error and not videos) else "✅"
         self.shop_done.emit(profile_id, allow + deny, allow, deny)
         self.progress.emit(f"  {icon} {allow + deny} video | ✅ Duet: {allow} | ❌ No duet: {deny}")
+
+    def _track_timeline(self, videos: list):
+        """Sau 3 creator liên tiếp bị 400002 thì ngừng quét creator (mỗi creator tốn 1 credit mà vẫn lỗi)."""
+        if videos:
+            self._tl_fail = 0
+        elif "400002" in (self.api.last_error or ""):
+            self._tl_fail += 1
+            if self._tl_fail >= 3 and not self._creators_off:
+                self._creators_off = True
+                self.crawl_creators = False
+                self.progress.emit("⛔ Shopee từ chối quét theo creator 3 lần liên tiếp (400002) — dừng quét creator "
+                                   "để khỏi tốn credit. Hãy dùng hashtag.")
 
     def _do_tag(self, n: int, tag_id: str, name: str):
         self._scanned_tags.add(tag_id)
