@@ -1,6 +1,12 @@
 @echo off
+rem Chay ban sao tam trong TEMP: git pull co the ghi de chinh file update.bat dang chay
+if "%~1"=="--run" goto MAIN
+copy /y "%~f0" "%TEMP%\shopee_update_runner.bat" >nul
+call "%TEMP%\shopee_update_runner.bat" --run "%~dp0" & exit /b
+
+:MAIN
 title Shopee Duet Checker - Cap Nhat Tu GitHub
-cd /d "%~dp0"
+cd /d "%~2"
 
 echo ================================================================
 echo        SHOPEE DUET CHECKER - CAP NHAT MA NGUON TU DONG
