@@ -14,7 +14,7 @@ from urllib.parse import quote, unquote
 
 from .headers import build_headers, timeline_headers, web_headers, get_region, REGIONS, APP_UA
 
-DEFAULT_SIGN_API_KEY = "Gte3Ka4W2Y2RTJ7MdcqFYua6nnMOImWx7BU2e2ZcseG5gBvU"
+DEFAULT_SIGN_API_KEY = ""   # Nhập API key trong tab Cài đặt (lưu ở settings.json, không đưa lên Git)
 DEFAULT_SIGN_API_URL = "https://credit.toolshopee.vn/api/sign"
 DEBUG_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "debug")
 

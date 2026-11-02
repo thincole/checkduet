@@ -1,6 +1,10 @@
 # File quan tri chi danh rieng cho may chu (khong day len GitHub)
 upload-github.bat
 
+# Cookie + API key rieng cua tung may (TUYET DOI khong day len GitHub)
+settings.json
+settings.json.bak
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

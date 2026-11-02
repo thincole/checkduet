@@ -36,6 +36,8 @@ if errorlevel 1 (
 )
 
 rem 3. Kiem tra va dong bo tu Git
+rem Sao luu settings.json (cookie/API key rieng cua may nay, khong nam tren GitHub)
+if exist "settings.json" copy /y "settings.json" "settings.json.bak" >nul
 set REPO_URL=https://github.com/thincole/checkduet.git
 
 if not exist ".git" goto INIT_GIT
@@ -46,6 +48,7 @@ git stash --quiet 2>nul
 git pull origin main
 if errorlevel 1 goto PULL_CONFLICT
 git stash pop --quiet >nul 2>nul
+git reset --quiet >nul 2>nul
 goto POST_SYNC
 
 :PULL_CONFLICT
@@ -83,6 +86,10 @@ rem 4. Dam bao cac thu muc can thiet
 if not exist "data" mkdir "data"
 if not exist "results" mkdir "results"
 if not exist "debug" mkdir "debug"
+
+rem 4b. Khoi phuc settings.json neu bi xoa khi dong bo (ban sao luu truoc, hoac file mau)
+if not exist "settings.json" if exist "settings.json.bak" copy /y "settings.json.bak" "settings.json" >nul
+if not exist "settings.json" if exist "settings.example.json" copy /y "settings.example.json" "settings.json" >nul
 
 rem 5. Doc phien ban hien tai
 set "CURRENT_VER=1.1"

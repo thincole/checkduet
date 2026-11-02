@@ -21,7 +21,7 @@ DEFAULTS = {
     "window_width":        1100,
     "window_height":       700,
     "sign_api_url":        "https://credit.toolshopee.vn/api/sign",
-    "sign_api_key":        "Gte3Ka4W2Y2RTJ7MdcqFYua6nnMOImWx7BU2e2ZcseG5gBvU",
+    "sign_api_key":        "",
     "viral_seeds":         "",
     "viral_crawl":         True,
     "viral_crawl_hashtags": True,
