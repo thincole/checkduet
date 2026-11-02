@@ -62,6 +62,9 @@ if /i "%FORCE_UPDATE%"=="Y" (
     goto POST_SYNC
 ) else (
     echo Bo qua dong bo. Giu nguyen ma nguon hien tai tren may nay.
+    git stash pop --quiet >nul 2>nul
+    git reset --quiet >nul 2>nul
+    if not exist "settings.json" if exist "settings.json.bak" copy /y "settings.json.bak" "settings.json" >nul
     pause
     exit /b 1
 )
