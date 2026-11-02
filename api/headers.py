@@ -4,7 +4,8 @@ User-Agent giả lập Android app Shopee (appver=33731) và Desktop Web
 Hỗ trợ đa quốc gia: VN, PH, ID, TH, MY, SG
 """
 
-APP_UA = "Android app Shopee appver=33731 app_type=1"
+DEFAULT_APP_VER = "29531"
+APP_UA = f"Android app Shopee appver={DEFAULT_APP_VER} app_type=1"
 WEB_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
           "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
 
@@ -73,7 +74,7 @@ def get_region(country: str = "VN") -> dict:
 
 DEFAULT_HEADERS = {
     "User-Agent": APP_UA,
-    "shopee_app_version": "33731",
+    "shopee_app_version": DEFAULT_APP_VER,
     "Content-Type": "application/json",
     "Accept": "application/json",
     "Accept-Language": "vi",
@@ -91,7 +92,7 @@ def build_headers(cookie: str = "", country: str = "VN") -> dict:
     return headers
 
 
-def timeline_headers(cookie: str = "", country: str = "VN") -> dict:
+def timeline_headers(cookie: str = "", country: str = "VN", appver: str = DEFAULT_APP_VER) -> dict:
     """Headers cho sv.shopee.{domain}/api/v2/timeline/me."""
     reg = get_region(country)
     headers = {
@@ -99,7 +100,7 @@ def timeline_headers(cookie: str = "", country: str = "VN") -> dict:
         "Content-Type": "application/json; charset=UTF-8",
         "Host": reg["video_domain"],
         "language": reg["lang"],
-        "User-Agent": APP_UA,
+        "User-Agent": f"Android app Shopee appver={appver} app_type=1",
         "X-SAP-Type": "1",
         "cache-control": "no-cache, no-store",
     }

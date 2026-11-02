@@ -354,9 +354,11 @@ class ShopeeAPI:
 
     def _signed_get_once(self, url: str, debug_name: str) -> tuple[dict | None, str]:
         """1 lần gửi. Trả về (data, "") khi thành công, (None, lý do) khi lỗi do cookie, (None, "") lỗi khác."""
-        # Server trả 400002 nếu shopee_app_version trong cookie khác appver của User-Agent
-        cookie = re.sub(r"shopee_app_version=\d+", "shopee_app_version=33731", self.cookie)
-        headers = timeline_headers(cookie, country=self.country)
+        # Phiên bản 29531 là phiên bản chuẩn tương thích với Sign API và không bị Shopee WAF chặn 418
+        cookie = re.sub(r"shopee_app_version=\d+", "shopee_app_version=29531", self.cookie or "")
+        if "shopee_app_version=" not in cookie:
+            cookie = (cookie + "; shopee_app_version=29531").strip("; ")
+        headers = timeline_headers(cookie, country=self.country, appver="29531")
         headers["client-request-id"] = str(uuid.uuid4())
         headers.update(self.get_signature(url))
         self.request_count += 1
