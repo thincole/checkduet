@@ -481,6 +481,9 @@ class ViralTab(QWidget):
             if vid:
                 vids.append(vid)
                 self._videos_by_id.pop(vid, None)
+        # Cập nhật bảng giao diện ngay lập tức trước khi ghi xuống đĩa
+        self._refresh()
+        QApplication.processEvents()
         if vids:
             if self.video_store:
                 self.video_store.delete_videos(vids, country)
@@ -488,7 +491,6 @@ class ViralTab(QWidget):
             if self.windows_store:
                 self.windows_store.delete_videos(vids)
                 self.windows_store.save()
-        self._refresh()
         self.log_status(f"🗑 Đã xóa {len(deleted_videos)} video khỏi danh sách.")
 
     def _delete_no_product_videos(self):

@@ -47,6 +47,8 @@ class WindowsStore:
         self._conn.execute(
             "CREATE TABLE IF NOT EXISTS product_videos (item_id TEXT, video_id TEXT, "
             "PRIMARY KEY (item_id, video_id))")
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_pv_video ON product_videos(video_id)")
         self._conn.commit()
         self._pend_prod: dict[str, tuple] = {}     # item_id → (shop_id, name)
         self._pend_link: set[tuple] = set()         # (item_id, video_id)
@@ -123,16 +125,21 @@ class WindowsStore:
     def delete_video(self, video_id: str):
         self.delete_videos([video_id])
 
-    def delete_videos(self, video_ids: list[str]):
-        clean = {str(v) for v in video_ids if v}
+    def delete_videos(self, video_ids):
+        clean = list({str(v) for v in video_ids if v})
         if not clean:
             return
         if self._pend_link:
-            self._pend_link = {(iid, v) for iid, v in self._pend_link if v not in clean}
-        self._conn.executemany(
-            "DELETE FROM product_videos WHERE video_id=?",
-            [(vid,) for vid in clean]
-        )
+            clean_set = set(clean)
+            self._pend_link = {(iid, v) for iid, v in self._pend_link if v not in clean_set}
+        # Xóa theo lô 900 ID mỗi câu lệnh IN (...) kết hợp index idx_pv_video cực nhanh
+        for i in range(0, len(clean), 900):
+            chunk = clean[i:i + 900]
+            placeholders = ",".join("?" * len(chunk))
+            self._conn.execute(
+                f"DELETE FROM product_videos WHERE video_id IN ({placeholders})",
+                chunk
+            )
         self._conn.commit()
 
     def clear(self):

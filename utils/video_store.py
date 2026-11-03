@@ -104,15 +104,18 @@ class VideoStore:
 
     def delete_videos(self, vids, country: str):
         cc = (country or "VN").upper()
-        clean = [str(v) for v in vids if v]
+        clean = list({str(v) for v in vids if v})
         if not clean:
             return
         for vid in clean:
             self._pending.pop((cc, vid), None)
-        self._conn.executemany(
-            "DELETE FROM videos WHERE country=? AND video_id=?",
-            [(cc, vid) for vid in clean]
-        )
+        for i in range(0, len(clean), 900):
+            chunk = clean[i:i + 900]
+            placeholders = ",".join("?" * len(chunk))
+            self._conn.execute(
+                f"DELETE FROM videos WHERE country=? AND video_id IN ({placeholders})",
+                [cc, *chunk]
+            )
         self._conn.commit()
 
     def clear(self, country: str):
