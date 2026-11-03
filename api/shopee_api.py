@@ -190,7 +190,7 @@ class ShopeeAPI:
             return False, d.get("message") or "App Shopee trên điện thoại chưa đăng nhập tài khoản!"
         return True, ck
 
-    def _get_phone_signature(self, url: str, body: str = "") -> dict:
+    def _get_phone_signature(self, url: str, body: str = "", keep_sz_token: bool = False) -> dict:
         """Ký request qua SPSign trên điện thoại (http://127.0.0.1:8080) hoàn toàn miễn phí."""
         base = self._phone_base_url()
         sign_url = f"{base}/?url={quote(url, safe='')}&body={quote(body or '', safe='')}"
@@ -201,8 +201,9 @@ class ShopeeAPI:
                 if resp.status_code == 200 and data.get("code") in (0, None):
                     sig = data.get("data") or {}
                     if isinstance(sig, dict):
-                        # Loại bỏ af-ac-enc-sz-token bản cũ để tương thích với luồng appver=29531 không bị 418
-                        sig.pop("af-ac-enc-sz-token", None)
+                        if not keep_sz_token:
+                            # Loại bỏ af-ac-enc-sz-token bản cũ để tương thích với luồng appver=29531 không bị 418
+                            sig.pop("af-ac-enc-sz-token", None)
                         return {str(k): str(v) for k, v in sig.items()}
                 self.last_error = f"SPSign lỗi: {data.get('message') or data}"
             except Exception as e:
@@ -213,13 +214,13 @@ class ShopeeAPI:
                 self.last_error = f"SPSign lỗi kết nối ({base}): {e}"
         return {}
 
-    def get_signature(self, url: str, body: str = "") -> dict:
+    def get_signature(self, url: str, body: str = "", keep_sz_token: bool = False) -> dict:
         """Lấy signature headers từ Phone Sign (SPSign) hoặc Sign API. Trả về {} nếu lỗi."""
         if self.is_phone_sign():
-            return self._get_phone_signature(url, body)
+            return self._get_phone_signature(url, body, keep_sz_token=keep_sz_token)
         if not self.sign_api_key:
             # Nếu không có API key nhưng có điện thoại cắm SPSign thì tự động dùng SPSign
-            sig = self._get_phone_signature(url, body)
+            sig = self._get_phone_signature(url, body, keep_sz_token=keep_sz_token)
             if sig:
                 return sig
             return {}
@@ -500,13 +501,25 @@ class ShopeeAPI:
 
     def _signed_get_once(self, url: str, debug_name: str) -> tuple[dict | None, str]:
         """1 lần gửi. Trả về (data, "") khi thành công, (None, lý do) khi lỗi do cookie, (None, "") lỗi khác."""
-        # Phiên bản 29531 là phiên bản chuẩn tương thích với Sign API và không bị Shopee WAF chặn 418
-        cookie = re.sub(r"shopee_app_version=\d+", "shopee_app_version=29531", self.cookie or "")
+        is_timeline = "/timeline/me" in url
+        if is_timeline:
+            # Endpoint /api/v2/timeline/me yêu cầu appver >= 29910 (appver <= 29900 bị trả code=400002)
+            appver = "36448" if (self.is_phone_sign() or not self.sign_api_key) else "33731"
+            keep_sz_token = True
+        else:
+            # Endpoint /hashtag/post/list dùng appver=29531 để vượt qua kiểm tra Captcha Video (418)
+            appver = "29531"
+            keep_sz_token = False
+
+        cookie = re.sub(r"shopee_app_version=\d+", f"shopee_app_version={appver}", self.cookie or "")
+        cookie = re.sub(r"version%3D\d+", f"version%3D{appver}", cookie)
+        cookie = re.sub(r"appver%3D\d+", f"appver%3D{appver}", cookie)
         if "shopee_app_version=" not in cookie:
-            cookie = (cookie + "; shopee_app_version=29531").strip("; ")
-        headers = timeline_headers(cookie, country=self.country, appver="29531")
+            cookie = (cookie + f"; shopee_app_version={appver}").strip("; ")
+
+        headers = timeline_headers(cookie, country=self.country, appver=appver)
         headers["client-request-id"] = str(uuid.uuid4())
-        headers.update(self.get_signature(url))
+        headers.update(self.get_signature(url, keep_sz_token=keep_sz_token))
         self.request_count += 1
         try:
             resp = requests.get(url, headers=headers, timeout=20)
@@ -518,17 +531,37 @@ class ShopeeAPI:
 
         self._save_debug(debug_name, data)
 
-        if data.get("is_login") is False:
+        if data.get("is_login") is False or data.get("2") is False:
             self.last_error = "Cookie chưa đăng nhập hoặc đã hết hạn. Vui lòng thay cookie mới."
             return None, "hết hạn"
-        if "captcha" in text.lower()[:2000]:
-            self.last_error = ("Cookie bị captcha! Mở shopee.vn bằng tài khoản này trên trình duyệt, "
-                               "giải captcha rồi copy cookie mới.")
+
+        text_low = text.lower()[:2000]
+        is_captcha = (
+            "captcha" in text_low
+            or "mfreyj" in text_low
+            or data.get("challenge_type") == 1
+            or data.get("4") == 1
+            or isinstance(data.get("6"), dict)
+        )
+        if is_captcha:
+            if self.is_phone_sign() or not self.sign_api_key:
+                self.last_error = (
+                    "Tài khoản Shopee đang bị Captcha ở mục Live & Video! "
+                    "Hãy mở tab 'Live & Video' trên app Shopee điện thoại, kéo giải hình Captcha "
+                    "rồi bấm '📲 Lấy Cookie từ Điện thoại (SPSign)' lại."
+                )
+            else:
+                self.last_error = (
+                    "Cookie bị Captcha ở mục Shopee Video! Hãy mở tab 'Live & Video' trên app Shopee "
+                    "của tài khoản này, kéo giải Captcha rồi lấy lại cookie mới."
+                )
             return None, "captcha"
-        if resp.status_code != 200 or (not data.get("data") and data.get("error")):
+
+        err_code = data.get("error") or data.get("3")
+        if resp.status_code != 200 or (not data.get("data") and err_code):
             has_signer = bool(self.sign_api_key or self.is_phone_sign())
             self.last_error = (
-                f"HTTP {resp.status_code}, error={data.get('error')} — "
+                f"HTTP {resp.status_code}, error={err_code} — "
                 + ("chưa có API key ký request (hoặc chưa kết nối SPSign)" if not has_signer
                    else "cookie hết hạn hoặc bị chặn")
             )
@@ -536,9 +569,6 @@ class ShopeeAPI:
             return None, ("bị chặn" if has_signer and self.cookie else "")
         if data.get("code") not in (0, None):
             self.last_error = f"Shopee trả lỗi code={data.get('code')} {data.get('msg') or ''}".strip()
-            if data.get("code") == 400002 and "/timeline/me" in url:
-                self.last_error += (" — Shopee từ chối endpoint quét theo creator (timeline/me) với phiên bản app "
-                                    "hiện tại. Không phải lỗi cookie; quét theo hashtag (Viral Finder) vẫn dùng được.")
             return None, ""
         return data, ""
 
