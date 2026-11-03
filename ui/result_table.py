@@ -171,10 +171,11 @@ class ResultTable(QTableWidget):
         self.row_count_changed.emit(0)
 
     def filter_duet_only(self, enabled: bool):
-        """Ẩn/hiện các row không có duet."""
+        """Ẩn/hiện các row không có duet hoặc không có link SP."""
         for row in range(self.rowCount()):
             v = self._row_data(row) or {}
-            self.setRowHidden(row, enabled and not v.get("allow_duet"))
+            hide = enabled and (not v.get("allow_duet") or not self.has_product_link(v))
+            self.setRowHidden(row, hide)
 
     def visible_videos(self) -> list:
         """Các dòng đang hiện, đúng thứ tự đang sắp xếp trên bảng."""

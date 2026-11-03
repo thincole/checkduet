@@ -36,7 +36,7 @@ def filter_viral(videos: list, max_age_days: int = 0, min_views: int = 0,
     """Lọc và xếp hạng. sort_by: 'views_per_day' hoặc 'duet_score'."""
     out = []
     for v in videos:
-        if duet_only and not v.get("allow_duet"):
+        if duet_only and (not v.get("allow_duet") or not (v.get("product_url") or "").strip()):
             continue
         if (v.get("play_count") or 0) < min_views:
             continue

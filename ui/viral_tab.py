@@ -201,7 +201,7 @@ class ViralTab(QWidget):
         self.spin_vpd  = spin(100_000_000, self.cfg.get("viral_min_vpd", 1000), 500)
         self.spin_sold = spin(100_000_000, self.cfg.get("viral_min_sold", 0), 100)
         self.spin_top  = spin(100_000, self.cfg.get("viral_top_n", 100), 10, special="Tất cả")
-        self.chk_duet  = QCheckBox("Chỉ video CÓ duet")
+        self.chk_duet  = QCheckBox("Chỉ video CÓ duet và CÓ link SP")
         self.chk_duet.setChecked(self.cfg.get("viral_duet_only", True))
         self.chk_duet.toggled.connect(self._refresh)
         self.cbo_sort = QComboBox()
@@ -476,10 +476,13 @@ class ViralTab(QWidget):
     def _on_viral_videos_deleted(self, deleted_videos: list):
         country = ((self.get_runtime() or {}).get("country", "VN")) if self.get_runtime else "VN"
         vids = []
+        vids_with_items = []
         for v in deleted_videos:
             vid = str(v.get("video_id") or "")
             if vid:
                 vids.append(vid)
+                if v.get("product_items") or v.get("product_url"):
+                    vids_with_items.append(vid)
                 self._videos_by_id.pop(vid, None)
         # Cập nhật bảng giao diện ngay lập tức trước khi ghi xuống đĩa
         self._refresh()
@@ -488,8 +491,8 @@ class ViralTab(QWidget):
             if self.video_store:
                 self.video_store.delete_videos(vids, country)
                 self.video_store.save()
-            if self.windows_store:
-                self.windows_store.delete_videos(vids)
+            if self.windows_store and vids_with_items:
+                self.windows_store.delete_videos(vids_with_items)
                 self.windows_store.save()
         self.log_status(f"🗑 Đã xóa {len(deleted_videos)} video khỏi danh sách.")
 
@@ -549,8 +552,8 @@ class ViralTab(QWidget):
         label = "Điểm duet" if self.cbo_sort.currentData() == "duet_score" else "View/ngày"
         what = "Video viral CÓ Duet" if self.cbo_mode.currentData() == "duet" else "Video viral theo View"
         self.grp_table.setTitle(f"{what} (xếp theo {label})")
-        duet = sum(1 for v in self._videos if v.get("allow_duet"))
-        text = f"Kho: {len(self._videos)} video | Có duet: {duet} | Hiện trong bảng: {len(result)}"
+        duet = sum(1 for v in self._videos if v.get("allow_duet") and ResultTable.has_product_link(v))
+        text = f"Kho: {len(self._videos)} video | Có duet + SP: {duet} | Hiện trong bảng: {len(result)}"
         hint = self._diagnose() if self._videos and not result else ""
         self.lbl_stats.setText(text + (f"  —  {hint}" if hint else ""))
         self.lbl_stats.setStyleSheet(

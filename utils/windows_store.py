@@ -40,15 +40,18 @@ class WindowsStore:
         self.data_dir = data_dir or DATA_DIR
         os.makedirs(self.data_dir, exist_ok=True)
         self.db_path = os.path.join(self.data_dir, "shopee_duet.db")
-        self._conn = sqlite3.connect(self.db_path)
+        self._conn = sqlite3.connect(self.db_path, timeout=30.0)
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute(
             "CREATE TABLE IF NOT EXISTS products (item_id TEXT PRIMARY KEY, shop_id TEXT, name TEXT)")
         self._conn.execute(
             "CREATE TABLE IF NOT EXISTS product_videos (item_id TEXT, video_id TEXT, "
             "PRIMARY KEY (item_id, video_id))")
-        self._conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_pv_video ON product_videos(video_id)")
+        try:
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_pv_video ON product_videos(video_id)")
+        except sqlite3.OperationalError:
+            pass
         self._conn.commit()
         self._pend_prod: dict[str, tuple] = {}     # item_id → (shop_id, name)
         self._pend_link: set[tuple] = set()         # (item_id, video_id)

@@ -246,7 +246,7 @@ class MainWindow(QMainWindow):
         # Filter + controls
         ctrl_row = QHBoxLayout()
 
-        self.chk_filter = QCheckBox("Chỉ hiện video CÓ duet")
+        self.chk_filter = QCheckBox("Chỉ hiện video CÓ duet và CÓ link SP")
         self.chk_filter.setChecked(self.cfg.get("filter_duet_only", False))
         self.chk_filter.toggled.connect(self._on_filter_changed)
 

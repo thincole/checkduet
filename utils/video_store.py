@@ -18,7 +18,7 @@ class VideoStore:
         self.data_dir = data_dir or DATA_DIR
         os.makedirs(self.data_dir, exist_ok=True)
         self.db_path = os.path.join(self.data_dir, "shopee_duet.db")
-        self._conn = sqlite3.connect(self.db_path)
+        self._conn = sqlite3.connect(self.db_path, timeout=30.0)
         self._conn.execute("PRAGMA journal_mode=WAL")   # ghi nhanh, không khóa cả file
         self._conn.execute(
             "CREATE TABLE IF NOT EXISTS videos ("
