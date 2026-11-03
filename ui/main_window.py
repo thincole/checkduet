@@ -18,7 +18,7 @@ from PyQt6.QtGui import QFont, QIcon
 from ui.result_table import ResultTable
 from ui.viral_tab import ViralTab
 from workers.scanner_worker import ScannerWorker
-from api.shopee_api import ShopeeAPI, DEFAULT_SIGN_API_URL, parse_cookies
+from api.shopee_api import ShopeeAPI, DEFAULT_SIGN_API_URL, PHONE_SIGN_URL, parse_cookies
 from api.headers import REGIONS, get_region
 from utils.exporter import export_csv, export_json, export_duet_urls
 from utils import gsheet
@@ -387,13 +387,30 @@ class MainWindow(QMainWindow):
         self._update_cookie_count()
         form.addRow("", self.lbl_cookie_count)
 
+        ck_btn_row = QHBoxLayout()
         btn_cookie_file = QPushButton("📂 Load từ file cookie")
         btn_cookie_file.clicked.connect(self._load_cookie_file)
-        form.addRow("", btn_cookie_file)
+        btn_cookie_phone = QPushButton("📲 Lấy Cookie từ Điện thoại (SPSign)")
+        btn_cookie_phone.setToolTip("Tự động lấy cookie sạch đang đăng nhập trong app Shopee trên điện thoại qua ADB + SPSign")
+        btn_cookie_phone.clicked.connect(self._load_cookie_from_phone)
+        ck_btn_row.addWidget(btn_cookie_file)
+        ck_btn_row.addWidget(btn_cookie_phone)
+        ck_btn_row.addStretch()
+        form.addRow("", ck_btn_row)
 
         # Sign API
+        sign_url_row = QHBoxLayout()
         self.txt_sign_url = QLineEdit(self.cfg.get("sign_api_url", DEFAULT_SIGN_API_URL))
-        form.addRow("Sign API URL:", self.txt_sign_url)
+        btn_use_phone_sign = QPushButton("📱 Dùng SPSign Điện thoại (Miễn phí)")
+        btn_use_phone_sign.setToolTip("Chuyển sang ký request miễn phí bằng điện thoại cắm ADB (http://127.0.0.1:8080)")
+        btn_use_phone_sign.clicked.connect(self._use_phone_sign)
+        btn_use_cloud_sign = QPushButton("☁️ Dùng ToolShopee")
+        btn_use_cloud_sign.setToolTip("Chuyển về Sign API mặc định (https://credit.toolshopee.vn/api/sign)")
+        btn_use_cloud_sign.clicked.connect(lambda: self.txt_sign_url.setText(DEFAULT_SIGN_API_URL))
+        sign_url_row.addWidget(self.txt_sign_url, 1)
+        sign_url_row.addWidget(btn_use_phone_sign)
+        sign_url_row.addWidget(btn_use_cloud_sign)
+        form.addRow("Sign API URL:", sign_url_row)
 
         key_row = QHBoxLayout()
         self.txt_api_key = QLineEdit(self.cfg.get("sign_api_key", ""))
@@ -645,21 +662,61 @@ class MainWindow(QMainWindow):
         if msg:
             self.log(msg)
 
+    def _load_cookie_from_phone(self):
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            api = ShopeeAPI(sign_api_url=PHONE_SIGN_URL, country=self._active_country)
+            ok, res = api.get_cookie_from_phone()
+        finally:
+            QApplication.restoreOverrideCursor()
+        if not ok:
+            QMessageBox.warning(self, "Lỗi lấy Cookie từ Điện thoại", res)
+            return
+        cur = self.txt_cookie.toPlainText().strip()
+        existing = parse_cookies(cur)
+        if res not in existing:
+            new_text = (res + ("\n" + cur if cur else "")).strip()
+            self.txt_cookie.setPlainText(new_text)
+        self._save_settings()
+        QMessageBox.information(
+            self, "Lấy Cookie thành công",
+            "✅ Đã lấy Cookie sạch từ app Shopee trên điện thoại và lưu vào cài đặt!"
+        )
+
+    def _use_phone_sign(self):
+        self.txt_sign_url.setText(PHONE_SIGN_URL)
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            api = ShopeeAPI(sign_api_url=PHONE_SIGN_URL, country=self._active_country)
+            ok, msg = api.connect_adb_spsign()
+        finally:
+            QApplication.restoreOverrideCursor()
+        self._save_settings()
+        if ok:
+            QMessageBox.information(
+                self, "Kết nối SPSign Điện thoại thành công",
+                f"✅ {msg}\n\nĐã đặt Sign API URL = {PHONE_SIGN_URL} (Ký miễn phí, không tốn credit!)."
+            )
+        else:
+            QMessageBox.warning(self, "Chưa kết nối được SPSign", msg)
+
     def _check_key(self):
         rt = self._runtime()
-        if not rt["sign_api_key"]:
-            QMessageBox.warning(self, "Thiếu API key", "Vui lòng nhập API key!")
+        api = ShopeeAPI(sign_api_key=rt["sign_api_key"],
+                        sign_api_url=rt["sign_api_url"],
+                        country=self._active_country)
+        if not api.is_phone_sign() and not rt["sign_api_key"]:
+            QMessageBox.warning(self, "Thiếu API key", "Vui lòng nhập API key (hoặc bấm '📱 Dùng SPSign Điện thoại')!")
             return
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
-            ok, msg = ShopeeAPI(sign_api_key=rt["sign_api_key"],
-                                sign_api_url=rt["sign_api_url"]).check_key()
+            ok, msg = api.check_key()
         finally:
             QApplication.restoreOverrideCursor()
         if ok:
-            QMessageBox.information(self, "API key hợp lệ", msg)
+            QMessageBox.information(self, "Kết nối Sign hợp lệ", msg)
         else:
-            QMessageBox.warning(self, "API key không hợp lệ", msg)
+            QMessageBox.warning(self, "Kết nối Sign không hợp lệ", msg)
 
     def _on_filter_changed(self, checked: bool):
         self.result_table.filter_duet_only(checked)

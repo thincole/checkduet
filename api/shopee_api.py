@@ -6,6 +6,8 @@ Bao gồm: sign request, search_shop, get_all_videos, resolve_short_link
 import json
 import os
 import re
+import shutil
+import subprocess
 import time
 import uuid
 import requests
@@ -16,6 +18,7 @@ from .headers import build_headers, timeline_headers, web_headers, get_region, R
 
 DEFAULT_SIGN_API_KEY = ""   # Nhập API key trong tab Cài đặt (lưu ở settings.json, không đưa lên Git)
 DEFAULT_SIGN_API_URL = "https://credit.toolshopee.vn/api/sign"
+PHONE_SIGN_URL       = "http://127.0.0.1:8080"
 DEBUG_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "debug")
 
 
@@ -80,11 +83,145 @@ class ShopeeAPI:
         self.session.headers.update(build_headers(self.cookie, country=self.country))
 
     # ------------------------------------------------------------------
-    # Sign API
+    # Sign API & Phone Sign (SPSign 127.0.0.1:8080)
     # ------------------------------------------------------------------
+    def is_phone_sign(self) -> bool:
+        """Kiểm tra có đang cấu hình dùng Phone Sign (SPSign trên điện thoại qua ADB) hay không."""
+        u = (self.sign_api_url or "").lower()
+        return "127.0.0.1" in u or "localhost" in u or ":8080" in u
+
+    def _phone_base_url(self) -> str:
+        u = (self.sign_api_url or PHONE_SIGN_URL).strip().rstrip("/")
+        if not self.is_phone_sign():
+            return PHONE_SIGN_URL
+        for suffix in ("/api/sign", "/api/send", "/api/debug_info", "/api/get_app_cookie"):
+            if u.endswith(suffix):
+                u = u[:-len(suffix)]
+        return u or PHONE_SIGN_URL
+
+    @staticmethod
+    def find_adb() -> str:
+        """Tìm đường dẫn adb.exe trên máy."""
+        w = shutil.which("adb")
+        if w:
+            return w
+        candidates = [
+            r"E:\0 - Post SP phone\adb.exe",
+            r"C:\platform-tools\adb.exe",
+            os.path.expandvars(r"%LOCALAPPDATA%\Android\Sdk\platform-tools\adb.exe"),
+        ]
+        for c in candidates:
+            if os.path.isfile(c):
+                return c
+        return "adb"
+
+    def connect_adb_spsign(self) -> tuple[bool, str]:
+        """Tự động forward cổng 8080 qua ADB, mở app Shopee nếu cần và kiểm tra SPSign."""
+        base = self._phone_base_url()
+        try:
+            r = requests.post(f"{base}/api/debug_info", json={}, timeout=2)
+            d = r.json()
+            if r.status_code == 200 and d.get("code") == 0 and d.get("sdk_loaded"):
+                return True, f"Đã kết nối SPSign ({d.get('brand', '')} {d.get('model', '')} - Android ID: {d.get('android_id', '')})"
+        except Exception:
+            pass
+
+        adb = self.find_adb()
+        kw = {" capture_output": True, "text": True, "timeout": 8}
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        try:
+            dev_out = subprocess.run([adb, "devices"], capture_output=True, text=True, timeout=6, creationflags=creationflags).stdout
+            serials = [
+                line.split()[0] for line in dev_out.splitlines()[1:]
+                if line.strip() and "\tdevice" in line
+            ]
+            if not serials:
+                return False, "Không tìm thấy điện thoại Android nào đang cắm cáp và bật USB Debugging."
+            serial = serials[0]
+            subprocess.run([adb, "-s", serial, "forward", "tcp:8080", "tcp:8080"],
+                           capture_output=True, text=True, timeout=6, creationflags=creationflags)
+        except Exception as e:
+            return False, f"Lỗi chạy ADB: {e}"
+
+        try:
+            r = requests.post(f"{base}/api/debug_info", json={}, timeout=2)
+            d = r.json()
+            if r.status_code == 200 and d.get("code") == 0:
+                return True, f"Đã kết nối SPSign ({d.get('brand', '')} {d.get('model', '')} - Android ID: {d.get('android_id', '')})"
+        except Exception:
+            pass
+
+        # Mở app Shopee trên điện thoại để khởi chạy XposedSignServer
+        pkg_map = {
+            "VN": "com.shopee.vn", "PH": "com.shopee.ph", "ID": "com.shopee.id",
+            "TH": "com.shopee.th", "MY": "com.shopee.my", "SG": "com.shopee.sg",
+        }
+        pkg = pkg_map.get(self.country, "com.shopee.vn")
+        try:
+            subprocess.run([adb, "-s", serial, "shell", "monkey", "-p", pkg, "-c", "android.intent.category.LAUNCHER", "1"],
+                           capture_output=True, text=True, timeout=6, creationflags=creationflags)
+        except Exception:
+            pass
+
+        for _ in range(6):
+            time.sleep(1)
+            try:
+                r = requests.post(f"{base}/api/debug_info", json={}, timeout=2)
+                d = r.json()
+                if r.status_code == 200 and d.get("code") == 0:
+                    return True, f"Đã mở Shopee & kết nối SPSign ({d.get('brand', '')} {d.get('model', '')} - Android ID: {d.get('android_id', '')})"
+            except Exception:
+                continue
+        return False, "Không kết nối được SPSign cổng 8080 trên điện thoại. Hãy kiểm tra LSPosed đã bật module SPSign cho Shopee chưa."
+
+    def get_cookie_from_phone(self) -> tuple[bool, str]:
+        """Lấy cookie sạch đang đăng nhập trực tiếp từ app Shopee trên điện thoại qua SPSign."""
+        ok, msg = self.connect_adb_spsign()
+        if not ok:
+            return False, msg
+        base = self._phone_base_url()
+        try:
+            r = requests.post(f"{base}/api/get_app_cookie", json={}, timeout=5)
+            d = r.json()
+        except Exception as e:
+            return False, f"Lỗi đọc cookie từ SPSign: {e}"
+        ck = (d.get("clean_cookie") or d.get("cookie") or "").strip()
+        if not ck or not d.get("logged_in", True):
+            return False, d.get("message") or "App Shopee trên điện thoại chưa đăng nhập tài khoản!"
+        return True, ck
+
+    def _get_phone_signature(self, url: str, body: str = "") -> dict:
+        """Ký request qua SPSign trên điện thoại (http://127.0.0.1:8080) hoàn toàn miễn phí."""
+        base = self._phone_base_url()
+        sign_url = f"{base}/?url={quote(url, safe='')}&body={quote(body or '', safe='')}"
+        for attempt in range(2):
+            try:
+                resp = requests.post(sign_url, timeout=10)
+                data = resp.json()
+                if resp.status_code == 200 and data.get("code") in (0, None):
+                    sig = data.get("data") or {}
+                    if isinstance(sig, dict):
+                        # Loại bỏ af-ac-enc-sz-token bản cũ để tương thích với luồng appver=29531 không bị 418
+                        sig.pop("af-ac-enc-sz-token", None)
+                        return {str(k): str(v) for k, v in sig.items()}
+                self.last_error = f"SPSign lỗi: {data.get('message') or data}"
+            except Exception as e:
+                if attempt == 0:
+                    ok, _ = self.connect_adb_spsign()
+                    if ok:
+                        continue
+                self.last_error = f"SPSign lỗi kết nối ({base}): {e}"
+        return {}
+
     def get_signature(self, url: str, body: str = "") -> dict:
-        """Lấy signature headers từ Sign API. Trả về {} nếu lỗi."""
+        """Lấy signature headers từ Phone Sign (SPSign) hoặc Sign API. Trả về {} nếu lỗi."""
+        if self.is_phone_sign():
+            return self._get_phone_signature(url, body)
         if not self.sign_api_key:
+            # Nếu không có API key nhưng có điện thoại cắm SPSign thì tự động dùng SPSign
+            sig = self._get_phone_signature(url, body)
+            if sig:
+                return sig
             return {}
         try:
             resp = requests.post(
@@ -106,7 +243,9 @@ class ShopeeAPI:
         return sig if isinstance(sig, dict) else {}
 
     def check_key(self) -> tuple[bool, str]:
-        """Kiểm tra API key qua /api/me."""
+        """Kiểm tra kết nối SPSign điện thoại hoặc kiểm tra API key qua /api/me."""
+        if self.is_phone_sign():
+            return self.connect_adb_spsign()
         me_url = self.sign_api_url.rsplit("/", 1)[0] + "/me"
         try:
             resp = requests.get(me_url, headers={"X-API-Key": self.sign_api_key}, timeout=20)
@@ -387,13 +526,14 @@ class ShopeeAPI:
                                "giải captcha rồi copy cookie mới.")
             return None, "captcha"
         if resp.status_code != 200 or (not data.get("data") and data.get("error")):
+            has_signer = bool(self.sign_api_key or self.is_phone_sign())
             self.last_error = (
                 f"HTTP {resp.status_code}, error={data.get('error')} — "
-                + ("chưa có API key ký request" if not self.sign_api_key
+                + ("chưa có API key ký request (hoặc chưa kết nối SPSign)" if not has_signer
                    else "cookie hết hạn hoặc bị chặn")
             )
             # Không có key thì lỗi không phải do cookie → đổi cookie cũng vô ích
-            return None, ("bị chặn" if self.sign_api_key and self.cookie else "")
+            return None, ("bị chặn" if has_signer and self.cookie else "")
         if data.get("code") not in (0, None):
             self.last_error = f"Shopee trả lỗi code={data.get('code')} {data.get('msg') or ''}".strip()
             if data.get("code") == 400002 and "/timeline/me" in url:
