@@ -102,7 +102,7 @@ class VideoStore:
     def delete_video(self, vid: str, country: str):
         self.delete_videos([vid], country)
 
-    def delete_videos(self, vids: list[str], country: str):
+    def delete_videos(self, vids, country: str):
         cc = (country or "VN").upper()
         clean = [str(v) for v in vids if v]
         if not clean:
