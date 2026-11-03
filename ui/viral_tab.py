@@ -6,7 +6,7 @@ from typing import Callable
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QLabel, QTextEdit,
     QPushButton, QSpinBox, QCheckBox, QSplitter, QFormLayout, QGridLayout,
-    QMessageBox, QApplication, QProgressBar, QComboBox,
+    QMessageBox, QApplication, QProgressBar, QComboBox, QFileDialog,
 )
 from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal
 
@@ -112,7 +112,22 @@ class ViralTab(QWidget):
         self.txt_seeds = QTextEdit()
         self.txt_seeds.setPlaceholderText("https://sv.shopee.vn/profile/957965727\n957965727\ntenshop")
         self.txt_seeds.setPlainText(self.cfg.get("viral_seeds", ""))
+        self.txt_seeds.textChanged.connect(self._on_seeds_changed)
         s_lay.addWidget(self.txt_seeds)
+        seed_btn = QHBoxLayout()
+        self.lbl_seed_status = QLabel()
+        self.lbl_seed_status.setStyleSheet("color: #666; font-size: 11px;")
+        self.btn_clear_seeds = QPushButton("🗑 Xóa")
+        self.btn_clear_seeds.setToolTip("Xóa danh sách KOC / Shop nguồn")
+        self.btn_clear_seeds.clicked.connect(self.txt_seeds.clear)
+        self.btn_import_seeds = QPushButton("📂 Import file .txt")
+        self.btn_import_seeds.setToolTip("Nhập danh sách KOC / Shop từ file .txt (mỗi dòng 1 ID, link hoặc username)")
+        self.btn_import_seeds.clicked.connect(self._import_seeds_file)
+        seed_btn.addWidget(self.lbl_seed_status, 1)
+        seed_btn.addWidget(self.btn_clear_seeds)
+        seed_btn.addWidget(self.btn_import_seeds)
+        s_lay.addLayout(seed_btn)
+        self._on_seeds_changed()
         src_row.addWidget(grp_seeds, 2)
 
         grp_tags = QGroupBox("#️⃣ Hashtag nguồn (tùy chọn — để trống sẽ KHÔNG tìm theo hashtag)")
@@ -307,6 +322,33 @@ class ViralTab(QWidget):
         self._refresh()
 
     # ──────────────────────────────────────────────────────────
+    def _on_seeds_changed(self):
+        seeds = self._lines(self.txt_seeds.toPlainText())
+        if seeds:
+            self.lbl_seed_status.setText(f"✅ {len(seeds)} KOC / Shop")
+        else:
+            self.lbl_seed_status.setText("Trống — chưa có KOC / Shop")
+
+    def _import_seeds_file(self):
+        last_dir = self.cfg.get("last_import_path", "")
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Chọn file danh sách KOC / Shop (.txt)", last_dir,
+            "Text Files (*.txt);;All Files (*)"
+        )
+        if not path:
+            return
+        try:
+            with open(path, "r", encoding="utf-8", errors="ignore") as f:
+                content = f.read().strip()
+        except Exception as e:
+            QMessageBox.warning(self, "Lỗi đọc file", f"Không thể đọc file:\n{e}")
+            return
+        self.cfg["last_import_path"] = path
+        if content:
+            self.txt_seeds.setPlainText(content)
+            seeds = self._lines(content)
+            self.log_status(f"📂 Đã import {len(seeds)} KOC/Shop từ {path}")
+
     def _on_tags_changed(self):
         tags = self._parse_tags()
         has_tags = bool(tags)
