@@ -245,22 +245,17 @@ class ViralTab(QWidget):
         btn_export = QPushButton("💾 Export CSV")
         btn_export.setObjectName("btn_export")
         btn_export.clicked.connect(self._export)
-        btn_copy = QPushButton("📋 Copy link viral")
-        btn_copy.clicked.connect(self._copy_links)
         btn_gsheet = QPushButton("📊 Google Sheet")
         btn_gsheet.setObjectName("btn_export")
         btn_gsheet.setToolTip("Ghi danh sách viral đang hiện vào Google Sheet (tab mới mỗi lần)")
         btn_gsheet.clicked.connect(self._export_gsheet)
-        btn_phone = QPushButton("📱 Điện thoại")
-        btn_phone.setToolTip("Xuất trang danh sách và mở trên điện thoại bằng mã QR")
-        btn_phone.clicked.connect(self._open_phone)
         btn_del_no_sp = QPushButton("🗑 Xóa không link SP")
         btn_del_no_sp.setObjectName("btn_stop")
         btn_del_no_sp.setToolTip("Xóa toàn bộ các video không có link sản phẩm (Link SP trống)")
         btn_del_no_sp.clicked.connect(self._delete_no_product_videos)
         btn_row.addWidget(self.lbl_stats)
         btn_row.addStretch()
-        for b in (self.btn_start, self.btn_stop, btn_del_no_sp, btn_export, btn_gsheet, btn_copy, btn_phone):
+        for b in (self.btn_start, self.btn_stop, btn_del_no_sp, btn_export, btn_gsheet):
             btn_row.addWidget(b)
         top_lay.addLayout(btn_row)
 
@@ -480,19 +475,19 @@ class ViralTab(QWidget):
 
     def _on_viral_videos_deleted(self, deleted_videos: list):
         country = ((self.get_runtime() or {}).get("country", "VN")) if self.get_runtime else "VN"
+        vids = []
         for v in deleted_videos:
-            vid = v.get("video_id")
+            vid = str(v.get("video_id") or "")
             if vid:
-                if vid in self._videos_by_id:
-                    del self._videos_by_id[vid]
-                if self.video_store:
-                    self.video_store.delete_video(vid, country)
-                if self.windows_store:
-                    self.windows_store.delete_video(vid)
-        if self.video_store:
-            self.video_store.save()
-        if self.windows_store:
-            self.windows_store.save()
+                vids.append(vid)
+                self._videos_by_id.pop(vid, None)
+        if vids:
+            if self.video_store:
+                self.video_store.delete_videos(vids, country)
+                self.video_store.save()
+            if self.windows_store:
+                self.windows_store.delete_videos(vids)
+                self.windows_store.save()
         self._refresh()
         self.log_status(f"🗑 Đã xóa {len(deleted_videos)} video khỏi danh sách.")
 

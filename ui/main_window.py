@@ -266,13 +266,6 @@ class MainWindow(QMainWindow):
         self.btn_export_json.setObjectName("btn_export")
         self.btn_export_json.clicked.connect(self._export_json)
 
-        self.btn_copy_urls = QPushButton("📋 Copy URL duet")
-        self.btn_copy_urls.clicked.connect(self._copy_duet_urls)
-
-        self.btn_phone = QPushButton("📱 Điện thoại")
-        self.btn_phone.setToolTip("Xuất trang danh sách các video đang hiện và mở trên điện thoại bằng mã QR")
-        self.btn_phone.clicked.connect(self._open_phone)
-
         self.btn_gsheet = QPushButton("📊 Google Sheet")
         self.btn_gsheet.setObjectName("btn_export")
         self.btn_gsheet.setToolTip("Ghi các video đang hiện vào Google Sheet (tab mới mỗi lần)")
@@ -291,8 +284,6 @@ class MainWindow(QMainWindow):
         ctrl_row.addWidget(self.btn_export_csv)
         ctrl_row.addWidget(self.btn_export_json)
         ctrl_row.addWidget(self.btn_gsheet)
-        ctrl_row.addWidget(self.btn_copy_urls)
-        ctrl_row.addWidget(self.btn_phone)
 
         top_lay.addLayout(ctrl_row)
 
@@ -732,19 +723,16 @@ class MainWindow(QMainWindow):
         )
 
     def _on_scanner_videos_deleted(self, deleted_videos: list):
-        del_ids = {v.get("video_id") for v in deleted_videos if v.get("video_id")}
-        self._results = [v for v in self._results if v.get("video_id") not in del_ids]
-        for v in deleted_videos:
-            vid = v.get("video_id")
-            if vid:
-                if self.video_store:
-                    self.video_store.delete_video(vid, self._active_country)
-                if self.windows_store:
-                    self.windows_store.delete_video(vid)
-        if self.video_store:
-            self.video_store.save()
-        if self.windows_store:
-            self.windows_store.save()
+        del_ids = [str(v.get("video_id")) for v in deleted_videos if v.get("video_id")]
+        del_set = set(del_ids)
+        self._results = [v for v in self._results if str(v.get("video_id") or "") not in del_set]
+        if del_ids:
+            if self.video_store:
+                self.video_store.delete_videos(del_ids, self._active_country)
+                self.video_store.save()
+            if self.windows_store:
+                self.windows_store.delete_videos(del_ids)
+                self.windows_store.save()
         self._update_stats(self.result_table.rowCount())
         self.status.showMessage(f"🗑 Đã xóa {len(deleted_videos)} video.", 3000)
 

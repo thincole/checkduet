@@ -304,15 +304,8 @@ class ResultTable(QTableWidget):
 
     @staticmethod
     def has_product_link(v: dict) -> bool:
-        """Kiểm tra video có gắn ít nhất 1 link sản phẩm hay không."""
-        if (v.get("product_url") or "").strip():
-            return True
-        if any(str(u).strip() for u in (v.get("product_urls") or [])):
-            return True
-        for it in (v.get("product_items") or []):
-            if isinstance(it, (list, tuple)) and len(it) >= 2 and str(it[0]).strip() and str(it[1]).strip():
-                return True
-        return False
+        """Kiểm tra video có Link SP hiển thị trên cột 'Link SP' (product_url) hay không."""
+        return bool((v.get("product_url") or "").strip())
 
     def delete_videos_without_product(self):
         """Xóa toàn bộ các dòng không có link sản phẩm đang có trên bảng."""
