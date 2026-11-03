@@ -278,10 +278,16 @@ class MainWindow(QMainWindow):
         self.btn_gsheet.setToolTip("Ghi các video đang hiện vào Google Sheet (tab mới mỗi lần)")
         self.btn_gsheet.clicked.connect(self._export_gsheet)
 
+        self.btn_del_no_sp = QPushButton("🗑 Xóa không link SP")
+        self.btn_del_no_sp.setObjectName("btn_stop")
+        self.btn_del_no_sp.setToolTip("Xóa toàn bộ các video không có link sản phẩm (Link SP trống)")
+        self.btn_del_no_sp.clicked.connect(lambda: self.result_table.delete_videos_without_product())
+
         ctrl_row.addWidget(self.chk_filter)
         ctrl_row.addStretch()
         ctrl_row.addWidget(self.btn_start)
         ctrl_row.addWidget(self.btn_stop)
+        ctrl_row.addWidget(self.btn_del_no_sp)
         ctrl_row.addWidget(self.btn_export_csv)
         ctrl_row.addWidget(self.btn_export_json)
         ctrl_row.addWidget(self.btn_gsheet)
@@ -678,6 +684,10 @@ class MainWindow(QMainWindow):
                     self.video_store.delete_video(vid, self._active_country)
                 if self.windows_store:
                     self.windows_store.delete_video(vid)
+        if self.video_store:
+            self.video_store.save()
+        if self.windows_store:
+            self.windows_store.save()
         self._update_stats(self.result_table.rowCount())
         self.status.showMessage(f"🗑 Đã xóa {len(deleted_videos)} video.", 3000)
 

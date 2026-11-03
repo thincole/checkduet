@@ -248,9 +248,13 @@ class ViralTab(QWidget):
         btn_phone = QPushButton("📱 Điện thoại")
         btn_phone.setToolTip("Xuất trang danh sách và mở trên điện thoại bằng mã QR")
         btn_phone.clicked.connect(self._open_phone)
+        btn_del_no_sp = QPushButton("🗑 Xóa không link SP")
+        btn_del_no_sp.setObjectName("btn_stop")
+        btn_del_no_sp.setToolTip("Xóa toàn bộ các video không có link sản phẩm (Link SP trống)")
+        btn_del_no_sp.clicked.connect(self._delete_no_product_videos)
         btn_row.addWidget(self.lbl_stats)
         btn_row.addStretch()
-        for b in (self.btn_start, self.btn_stop, btn_export, btn_gsheet, btn_copy, btn_phone):
+        for b in (self.btn_start, self.btn_stop, btn_del_no_sp, btn_export, btn_gsheet, btn_copy, btn_phone):
             btn_row.addWidget(b)
         top_lay.addLayout(btn_row)
 
@@ -268,6 +272,7 @@ class ViralTab(QWidget):
         t_lay = QVBoxLayout(grp_t)
         self.table = ResultTable(columns=VIRAL_COLUMNS)
         self.table.videos_deleted.connect(self._on_viral_videos_deleted)
+        self.table.custom_delete_no_product = self._delete_no_product_videos
         t_lay.addWidget(self.table)
         bottom.addWidget(grp_t)
 
@@ -462,8 +467,37 @@ class ViralTab(QWidget):
                     self.video_store.delete_video(vid, country)
                 if self.windows_store:
                     self.windows_store.delete_video(vid)
+        if self.video_store:
+            self.video_store.save()
+        if self.windows_store:
+            self.windows_store.save()
         self._refresh()
         self.log_status(f"🗑 Đã xóa {len(deleted_videos)} video khỏi danh sách.")
+
+    def _delete_no_product_videos(self):
+        """Xóa tất cả video không gắn link sản phẩm trong bảng và trong kho."""
+        visible_no_sp = [v for v in self.table.visible_videos() if not ResultTable.has_product_link(v)]
+        all_no_sp = [v for v in self._videos_by_id.values() if not ResultTable.has_product_link(v)]
+        if not visible_no_sp and not all_no_sp:
+            QMessageBox.information(self, "Thông báo", "Không có video nào thiếu link sản phẩm!")
+            return
+
+        targets = all_no_sp if len(all_no_sp) >= len(visible_no_sp) else visible_no_sp
+        msg = (
+            f"Tìm thấy {len(targets)} video không có link sản phẩm "
+            f"(trong đó {len(visible_no_sp)} video đang hiển thị trên bảng).\n\n"
+            f"Bạn có chắc muốn xóa toàn bộ {len(targets)} video này không?"
+        )
+        ret = QMessageBox.question(
+            self, "Xác nhận xóa video không có link SP", msg,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if ret != QMessageBox.StandardButton.Yes:
+            return
+
+        self._on_viral_videos_deleted(targets)
+        self.log(f"🗑 Đã xóa {len(targets)} video không có link sản phẩm.")
 
     def _on_mode_changed(self, *_):
         """Đổi mục tiêu: đặt lại lọc duet và cách xếp cho phù hợp, rồi lọc lại bảng."""

@@ -238,6 +238,7 @@ class ResultTable(QTableWidget):
         count = len(selected_rows)
         del_label = f"🗑 Xóa {count} video đã chọn" if count > 1 else "🗑 Xóa video này"
         act_delete = menu.addAction(del_label)
+        act_delete_no_sp = menu.addAction("🗑 Xóa các video không có link SP")
 
         action = menu.exec(QCursor.pos())
 
@@ -245,6 +246,8 @@ class ResultTable(QTableWidget):
             return
         if action == act_delete:
             self.delete_selected_rows(selected_rows)
+        elif action == act_delete_no_sp:
+            self.delete_videos_without_product()
         elif action == act_open_sp:
             webbrowser.open(main_u or prod_urls[0])
         elif action == act_copy_sp:
@@ -292,6 +295,62 @@ class ResultTable(QTableWidget):
         sorting = self.isSortingEnabled()
         self.setSortingEnabled(False)
         for r in rows:
+            self.removeRow(r)
+        self.setSortingEnabled(sorting)
+
+        self.row_count_changed.emit(self.rowCount())
+        if deleted_videos:
+            self.videos_deleted.emit(deleted_videos)
+
+    @staticmethod
+    def has_product_link(v: dict) -> bool:
+        """Kiểm tra video có gắn ít nhất 1 link sản phẩm hay không."""
+        if (v.get("product_url") or "").strip():
+            return True
+        if any(str(u).strip() for u in (v.get("product_urls") or [])):
+            return True
+        for it in (v.get("product_items") or []):
+            if isinstance(it, (list, tuple)) and len(it) >= 2 and str(it[0]).strip() and str(it[1]).strip():
+                return True
+        return False
+
+    def delete_videos_without_product(self):
+        """Xóa toàn bộ các dòng không có link sản phẩm đang có trên bảng."""
+        if callable(getattr(self, "custom_delete_no_product", None)):
+            self.custom_delete_no_product()
+            return
+        rows_to_del = []
+        for r in range(self.rowCount() - 1, -1, -1):
+            v = self._row_data(r)
+            if v and not self.has_product_link(v):
+                rows_to_del.append(r)
+
+        if not rows_to_del:
+            QMessageBox.information(self, "Thông báo", "Không có video nào thiếu link sản phẩm trong bảng hiện tại!")
+            return
+
+        count = len(rows_to_del)
+        ret = QMessageBox.question(
+            self, "Xác nhận xóa",
+            f"Bạn có chắc muốn xóa {count} video không có link sản phẩm không?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if ret != QMessageBox.StandardButton.Yes:
+            return
+
+        deleted_videos = []
+        for r in rows_to_del:
+            v = self._row_data(r)
+            if v:
+                deleted_videos.append(v)
+
+        del_ids = {v.get("video_id") for v in deleted_videos if v.get("video_id")}
+        self._all_data = [v for v in self._all_data if v.get("video_id") not in del_ids and self.has_product_link(v)]
+
+        sorting = self.isSortingEnabled()
+        self.setSortingEnabled(False)
+        for r in rows_to_del:
             self.removeRow(r)
         self.setSortingEnabled(sorting)
 
