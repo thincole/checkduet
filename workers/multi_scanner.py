@@ -64,8 +64,11 @@ class MultiScanWorker(QThread):
         try:
             self.progress.emit(f"🌐 Khu vực: {self.country} | 🧵 {self.num_threads} luồng / "
                                f"{len(self.cookies)} cookie")
-            if not self.sign_api_key:
-                self.progress.emit("⚠️ Chưa có API key ký request — Shopee có thể trả về lỗi 418.")
+            is_phone = "127.0.0.1" in (self.sign_api_url or "") or "localhost" in (self.sign_api_url or "")
+            if is_phone:
+                self.progress.emit("📱 Chế độ ký request: SPSign Điện thoại (Miễn phí)")
+            elif not self.sign_api_key:
+                self.progress.emit("⚠️ Chưa có API key ký request — đang thử tự động dùng SPSign điện thoại.")
             threads = []
             for i in range(self.num_threads):
                 t = threading.Thread(target=self._worker, args=(i,), daemon=True)
@@ -197,6 +200,17 @@ class MultiScanWorker(QThread):
 
     def _do_tag(self, api, tag_id, name):
         self.progress.emit(f"#️⃣ Hashtag: {name}")
+        if not tag_id:
+            r = api.hashtag_id_by_name(name)
+            if not r:
+                self.progress.emit(f"  ⚠️ Không tìm thấy hashtag '{name}' trên thị trường {self.country}.")
+                return
+            real_name, tag_id, _ = r
+            name = f"#{real_name.lstrip('#')}"
+            with self.lock:
+                if tag_id in self._scanned_tags:
+                    return
+                self._scanned_tags.add(tag_id)
         videos = api.get_hashtag_videos(tag_id, name, max_videos=self.hashtag_videos,
                                         stop_flag=lambda: self._stop or not self._budget_left())
         if api.last_error:

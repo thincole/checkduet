@@ -24,7 +24,7 @@ DEFAULTS = {
     "sign_api_key":        "",
     "viral_seeds":         "",
     "viral_crawl":         True,
-    "viral_crawl_hashtags": True,
+    "viral_crawl_hashtags": False,
     "viral_hashtags":      "",
     "hashtags_by_country": {},
     "viral_credit_budget": 50,

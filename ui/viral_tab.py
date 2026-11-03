@@ -115,25 +115,31 @@ class ViralTab(QWidget):
         s_lay.addWidget(self.txt_seeds)
         src_row.addWidget(grp_seeds, 2)
 
-        grp_tags = QGroupBox("#️⃣ Hashtag nguồn (#tên | hashtag_id)")
+        grp_tags = QGroupBox("#️⃣ Hashtag nguồn (tùy chọn — để trống sẽ KHÔNG tìm theo hashtag)")
         t_lay = QVBoxLayout(grp_tags)
         self.txt_tags = QTextEdit()
+        self.txt_tags.setPlaceholderText("Để trống nếu chỉ muốn quét theo KOC/Shop bên trái.\nNếu muốn tìm theo hashtag, nhập:\n#xuhuong\nhoặc bấm '🔄 Tải hashtag phổ biến' bên dưới.")
+        self.txt_tags.textChanged.connect(self._on_tags_changed)
         t_lay.addWidget(self.txt_tags)
         tag_btn = QHBoxLayout()
-        self.lbl_tag_status = QLabel()
+        self.lbl_tag_status = QLabel("Trống — không tìm theo hashtag")
         self.lbl_tag_status.setStyleSheet("color: #666; font-size: 11px;")
+        self.btn_clear_tags = QPushButton("🗑 Xóa")
+        self.btn_clear_tags.setToolTip("Xóa trống ô hashtag để chỉ quét theo KOC/Shop")
+        self.btn_clear_tags.clicked.connect(self.txt_tags.clear)
         self.btn_reload_tags = QPushButton("🔄 Tải hashtag phổ biến")
         self.btn_reload_tags.setToolTip("Tải 10 hashtag phổ biến nhất của quốc gia đang chọn (không tốn credit)")
         self.btn_reload_tags.clicked.connect(lambda: self.load_hashtags(self.cbo_country.currentData(), force=True))
         tag_btn.addWidget(self.lbl_tag_status, 1)
+        tag_btn.addWidget(self.btn_clear_tags)
         tag_btn.addWidget(self.btn_reload_tags)
         t_lay.addLayout(tag_btn)
         src_row.addWidget(grp_tags, 2)
 
         grp_kw = QGroupBox("🕸 Quét lan tự động")
         k_lay = QVBoxLayout(grp_kw)
-        self.chk_crawl_tags = QCheckBox("Lan theo hashtag trong video")
-        self.chk_crawl_tags.setChecked(self.cfg.get("viral_crawl_hashtags", True))
+        self.chk_crawl_tags = QCheckBox("Lan theo hashtag trong video (chỉ khi có điền Hashtag nguồn)")
+        self.chk_crawl_tags.setChecked(self.cfg.get("viral_crawl_hashtags", False))
         self.chk_crawl = QCheckBox("Lan theo creator / shop liên quan")
         self.chk_crawl.setChecked(self.cfg.get("viral_crawl", True))
         k_lay.addWidget(self.chk_crawl_tags)
@@ -306,17 +312,24 @@ class ViralTab(QWidget):
         self._refresh()
 
     # ──────────────────────────────────────────────────────────
+    def _on_tags_changed(self):
+        tags = self._parse_tags()
+        has_tags = bool(tags)
+        self.chk_crawl_tags.setEnabled(has_tags)
+        if has_tags:
+            self.lbl_tag_status.setText(f"✅ Sẽ quét {len(tags)} hashtag")
+        else:
+            self.lbl_tag_status.setText("Trống — không tìm theo hashtag")
+
     def load_hashtags(self, country: str, force: bool = False):
-        """Đổ 10 hashtag phổ biến của quốc gia vào ô. Ưu tiên cache; chưa có (hoặc force) thì tải nền."""
+        """Chỉ tải 10 hashtag phổ biến khi người dùng chủ động bấm nút (force=True)."""
         country = country or "VN"
-        cached = self._hashtags_by_country.get(country)
-        if cached and not force:
-            self.txt_tags.setPlainText(cached)
-            self.lbl_tag_status.setText(f"Hashtag {country} (đã lưu)")
+        if not force:
+            # Khi mở app hoặc đổi quốc gia: giữ nguyên nội dung đã lưu (nếu trống thì để trống, KHÔNG tự tải)
+            saved = self._hashtags_by_country.get(country, "")
+            self.txt_tags.setPlainText(saved)
+            self._on_tags_changed()
             return
-        # Bỏ qua cấu hình cũ viral_hashtags cho VN ở lần đầu nếu có
-        if not force and country == self.cfg.get("country") and self.cfg.get("viral_hashtags") and not self._hashtags_by_country:
-            self.txt_tags.setPlainText(self.cfg["viral_hashtags"])
         if self._tag_loader and self._tag_loader.isRunning():
             self._tag_loader.done.disconnect()
             self._tag_loader.terminate()
@@ -370,12 +383,18 @@ class ViralTab(QWidget):
 
     def _parse_tags(self) -> list:
         tags = []
-        for line in self.txt_tags.toPlainText().splitlines():
-            if "|" not in line:
+        for raw in self.txt_tags.toPlainText().splitlines():
+            line = raw.strip()
+            if not line:
                 continue
-            name, tid = (p.strip() for p in line.split("|", 1))
-            if tid.isdigit() and name:
-                tags.append((tid, name if name.startswith("#") else f"#{name}"))
+            if "|" in line:
+                name, tid = (p.strip() for p in line.split("|", 1))
+                if tid.isdigit() and name:
+                    tags.append((tid, name if name.startswith("#") else f"#{name}"))
+            else:
+                # Cho phép nhập trực tiếp tên hashtag (vd: #xuhuong hoặc xuhuong), worker sẽ tự đổi sang id
+                name = line if line.startswith("#") else f"#{line}"
+                tags.append(("", name))
         return tags
 
     @staticmethod
@@ -391,8 +410,11 @@ class ViralTab(QWidget):
         tags = self._parse_tags()
         if not seeds and not tags:
             QMessageBox.warning(self, "Thiếu nguồn",
-                                "Nhập ít nhất 1 KOC/shop hoặc 1 hashtag (dạng #ten | hashtag_id)!")
+                                "Nhập ít nhất 1 KOC/shop hoặc 1 hashtag!")
             return
+
+        # Chỉ khi người dùng có điền hashtag ở ô Hashtag nguồn thì mới tìm/lan theo hashtag
+        crawl_hashtags = bool(tags) and self.chk_crawl_tags.isChecked()
 
         # Giữ lại video đã có trong kho; quét mới gộp/cập nhật vào, không xóa
         self.txt_log.clear()
@@ -415,7 +437,7 @@ class ViralTab(QWidget):
             hashtags        = tags,
             hashtag_videos  = self.spin_per_tag.value(),
             crawl_creators  = self.chk_crawl.isChecked(),
-            crawl_hashtags  = self.chk_crawl_tags.isChecked(),
+            crawl_hashtags  = crawl_hashtags,
             credit_budget   = self.spin_budget.value(),
             num_threads     = self.spin_threads.value(),
         )
