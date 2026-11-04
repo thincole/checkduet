@@ -127,19 +127,28 @@ class ShopeeAPI:
             pass
 
         adb = self.find_adb()
-        kw = {" capture_output": True, "text": True, "timeout": 8}
         creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        serial = ""
+        used_port = "5037"
         try:
-            dev_out = subprocess.run([adb, "devices"], capture_output=True, text=True, timeout=6, creationflags=creationflags).stdout
-            serials = [
-                line.split()[0] for line in dev_out.splitlines()[1:]
-                if line.strip() and "\tdevice" in line
-            ]
-            if not serials:
+            for port in ("5037", "5038"):
+                dev_out = subprocess.run([adb, "-P", port, "devices"], capture_output=True, text=True, timeout=6, creationflags=creationflags).stdout
+                serials = [
+                    line.split()[0] for line in dev_out.splitlines()[1:]
+                    if line.strip() and "\tdevice" in line
+                ]
+                if not serials:
+                    continue
+                # Ưu tiên máy TIGER nếu đang cắm chung dàn máy Samsung
+                tiger = [s for s in serials if "TIGER" in s.upper()]
+                serial = tiger[0] if tiger else serials[0]
+                used_port = port
+                subprocess.run([adb, "-P", port, "-s", serial, "forward", "tcp:8080", "tcp:8080"],
+                               capture_output=True, text=True, timeout=6, creationflags=creationflags)
+                if tiger:
+                    break
+            if not serial:
                 return False, "Không tìm thấy điện thoại Android nào đang cắm cáp và bật USB Debugging."
-            serial = serials[0]
-            subprocess.run([adb, "-s", serial, "forward", "tcp:8080", "tcp:8080"],
-                           capture_output=True, text=True, timeout=6, creationflags=creationflags)
         except Exception as e:
             return False, f"Lỗi chạy ADB: {e}"
 
@@ -532,7 +541,13 @@ class ShopeeAPI:
         self._save_debug(debug_name, data)
 
         if data.get("is_login") is False or data.get("2") is False:
-            self.last_error = "Cookie chưa đăng nhập hoặc đã hết hạn. Vui lòng thay cookie mới."
+            if self.country != "VN" and ("language=vi" in (self.cookie or "") or "locale%2Fvi" in (self.cookie or "")):
+                self.last_error = (
+                    f"Cookie đang dùng là của Shopee Việt Nam (com.shopee.vn) nên không dùng được cho thị trường {self.country}! "
+                    f"Hãy đổi Quốc gia mục tiêu về Việt Nam (VN) hoặc dán Cookie của Shopee {self.country}."
+                )
+            else:
+                self.last_error = "Cookie chưa đăng nhập hoặc đã hết hạn. Vui lòng thay cookie mới."
             return None, "hết hạn"
 
         text_low = text.lower()[:2000]

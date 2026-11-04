@@ -151,7 +151,7 @@ class MainWindow(QMainWindow):
         self.setStatusBar(self.status)
         self.status.showMessage("Sẵn sàng.")
 
-        tabs = QTabWidget()
+        self.tabs = tabs = QTabWidget()
         scanner_tab  = self._build_tab_scanner()
         settings_tab = self._build_tab_settings()
         status = lambda m: self.status.showMessage(m, 5000)
@@ -160,7 +160,8 @@ class MainWindow(QMainWindow):
         self.windows_tab = WindowsTab(self.windows_store, self._runtime, status)
         tabs.addTab(scanner_tab, "🔍 Scanner")
         tabs.addTab(self.viral_tab, "🔥 Viral Finder")
-        tabs.addTab(self.windows_tab, "🪟 Cửa sổ SP")
+        self._windows_tab_idx = tabs.addTab(self.windows_tab, "🪟 Cửa sổ SP")
+        tabs.setTabVisible(self._windows_tab_idx, bool(self.cfg.get("show_windows_tab", False)))
         tabs.addTab(settings_tab, "⚙️ Cài đặt")
         tabs.currentChanged.connect(
             lambda i: self.windows_tab.refresh() if tabs.widget(i) is self.windows_tab
@@ -663,6 +664,22 @@ class MainWindow(QMainWindow):
         if not ok:
             QMessageBox.warning(self, "Lỗi lấy Cookie từ Điện thoại", res)
             return
+
+        # Kiểm tra nếu Cookie lấy từ app Shopee Việt Nam (com.shopee.vn) nhưng đang chọn quốc gia khác (vd: PH)
+        is_vn_cookie = ("language=vi" in res or "locale%2Fvi" in res)
+        if is_vn_cookie and self._active_country != "VN":
+            ans = QMessageBox.question(
+                self,
+                "Khác quốc gia với Cookie trên điện thoại",
+                f"Điện thoại đang chạy app Shopee Việt Nam (com.shopee.vn), nhưng trên phần mềm bạn đang chọn thị trường '{self._active_country}'.\n\n"
+                f"Cookie của Shopee Việt Nam chỉ dùng được cho thị trường Việt Nam (VN) (dùng cho {self._active_country} sẽ báo lỗi HTTP 403).\n\n"
+                f"Bạn có muốn chuyển Quốc gia mục tiêu về '🇻🇳 Việt Nam (VN)' và lưu Cookie này vào VN luôn không?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes,
+            )
+            if ans == QMessageBox.StandardButton.Yes:
+                self._on_country_changed("VN")
+
         cur = self.txt_cookie.toPlainText().strip()
         existing = parse_cookies(cur)
         if res not in existing:
@@ -671,7 +688,7 @@ class MainWindow(QMainWindow):
         self._save_settings()
         QMessageBox.information(
             self, "Lấy Cookie thành công",
-            "✅ Đã lấy Cookie sạch từ app Shopee trên điện thoại và lưu vào cài đặt!"
+            f"✅ Đã lấy Cookie sạch từ app Shopee trên điện thoại và lưu vào thị trường {self._active_country}!"
         )
 
     def _use_phone_sign(self):
