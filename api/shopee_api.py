@@ -123,15 +123,13 @@ class ShopeeAPI:
     }
 
     def connect_adb_spsign(self) -> tuple[bool, str]:
-        """Tự động forward cổng 8080 qua ADB, mở đúng app Shopee theo quốc gia và kiểm tra SPSign."""
+        """Tự động forward cổng 8080 qua ADB và kiểm tra SPSign (tuyệt đối không tắt app Shopee đang giữ cổng 8080)."""
         base = self._phone_base_url()
-        pkg = self.COUNTRY_PKG_MAP.get(self.country, "com.shopee.vn")
         try:
             r = requests.post(f"{base}/api/debug_info", json={}, timeout=2)
             d = r.json()
-            if r.status_code == 200 and d.get("code") == 0 and d.get("sdk_loaded") and d.get("package") == pkg:
-                self._verified_phone_pkg = pkg
-                return True, f"Đã kết nối SPSign [{pkg}] ({d.get('brand', '')} {d.get('model', '')} - Android ID: {d.get('android_id', '')})"
+            if r.status_code == 200 and d.get("code") == 0 and d.get("sdk_loaded"):
+                return True, f"Đã kết nối SPSign [{d.get('package', '')}] ({d.get('brand', '')} {d.get('model', '')} - Android ID: {d.get('android_id', '')})"
         except Exception:
             pass
 
@@ -164,50 +162,35 @@ class ShopeeAPI:
         try:
             r = requests.post(f"{base}/api/debug_info", json={}, timeout=2)
             d = r.json()
-            if r.status_code == 200 and d.get("code") == 0 and d.get("package") == pkg:
-                self._verified_phone_pkg = pkg
-                return True, f"Đã kết nối SPSign [{pkg}] ({d.get('brand', '')} {d.get('model', '')} - Android ID: {d.get('android_id', '')})"
+            if r.status_code == 200 and d.get("code") == 0:
+                return True, f"Đã kết nối SPSign [{d.get('package', '')}] ({d.get('brand', '')} {d.get('model', '')} - Android ID: {d.get('android_id', '')})"
         except Exception:
             pass
 
-        # Kiểm tra xem điện thoại đã cài đúng app Shopee của quốc gia đang chọn chưa
+        # Chỉ khi cổng 8080 chưa có bất kỳ app Shopee nào chạy thì mới khởi động com.shopee.vn
+        pkg = "com.shopee.vn"
         try:
-            pm_out = subprocess.run(
-                [adb, "-P", used_port, "-s", serial, "shell", "pm", "path", pkg],
-                capture_output=True, text=True, timeout=6, creationflags=creationflags
-            ).stdout
-            if "package:" not in (pm_out or ""):
-                return False, f"Điện thoại chưa cài ứng dụng Shopee của thị trường {self.country} ({pkg})!"
-        except Exception:
-            pass
-
-        # Đóng tất cả các app Shopee khác đang chiếm cổng 8080 rồi mở đúng app Shopee của quốc gia đang chọn
-        try:
-            stop_all = "; ".join(f"am force-stop {p}" for p in self.COUNTRY_PKG_MAP.values())
-            subprocess.run([adb, "-P", used_port, "-s", serial, "shell", stop_all],
-                           capture_output=True, text=True, timeout=6, creationflags=creationflags)
             subprocess.run(
                 [adb, "-P", used_port, "-s", serial, "shell", "am", "start", "-n",
-                 f"{pkg}/com.shopee.app.biz.home.ui.home.HomeActivity"],
+                 "com.shopee.vn/com.shopee.app.ui.home.HomeActivity_"],
                 capture_output=True, text=True, timeout=6, creationflags=creationflags
             )
         except Exception:
             pass
 
-        for _ in range(8):
+        for _ in range(6):
             time.sleep(1)
             try:
                 r = requests.post(f"{base}/api/debug_info", json={}, timeout=2)
                 d = r.json()
-                if r.status_code == 200 and d.get("code") == 0 and d.get("package") == pkg:
-                    self._verified_phone_pkg = pkg
-                    return True, f"Đã mở {pkg} & kết nối SPSign ({d.get('brand', '')} {d.get('model', '')} - Android ID: {d.get('android_id', '')})"
+                if r.status_code == 200 and d.get("code") == 0:
+                    return True, f"Đã kết nối SPSign [{d.get('package', '')}] ({d.get('brand', '')} {d.get('model', '')} - Android ID: {d.get('android_id', '')})"
             except Exception:
                 continue
-        return False, f"Không kết nối được SPSign cổng 8080 cho ứng dụng {pkg}. Hãy kiểm tra LSPosed đã bật module SPSign cho {pkg} chưa."
+        return False, "Không kết nối được SPSign cổng 8080 trên điện thoại. Hãy kiểm tra LSPosed đã bật module SPSign cho Shopee chưa."
 
     def _read_cookie_from_webview_db(self, pkg: str) -> str:
-        """Fallback đọc trực tiếp SQLite Cookies của WebView thông qua quyền root nếu cần."""
+        """Đọc trực tiếp SQLite Cookies của đúng app Shopee (vd: com.shopee.ph) mà không đụng tới cổng 8080."""
         import sqlite3
         import tempfile
         adb = self.find_adb()
@@ -220,23 +203,39 @@ class ShopeeAPI:
                     continue
                 tiger = [s for s in serials if "TIGER" in s.upper()]
                 serial = tiger[0] if tiger else serials[0]
-                remote_tmp = f"/sdcard/.sp_cookies_{self.country.lower()}.db"
-                cmd = f"db=$(find /data/data/{pkg} -name Cookies | head -n 1); if [ -n \"$db\" ]; then cp \"$db\" {remote_tmp}; fi"
+                remote_base = f"/sdcard/.sp_ck_{self.country.lower()}"
+                cmd = (
+                    f"db=$(find /data/data/{pkg} -name Cookies | head -n 1); "
+                    f"if [ -n \"$db\" ]; then "
+                    f"cp \"$db\" {remote_base}.db; "
+                    f"[ -f \"${{db}}-wal\" ] && cp \"${{db}}-wal\" {remote_base}.db-wal; "
+                    f"[ -f \"${{db}}-shm\" ] && cp \"${{db}}-shm\" {remote_base}.db-shm; "
+                    f"fi"
+                )
                 subprocess.run([adb, "-P", port, "-s", serial, "shell", f"su -c '{cmd}'"],
                                capture_output=True, text=True, timeout=6, creationflags=creationflags)
-                local_tmp = os.path.join(tempfile.gettempdir(), f"sp_cookies_{self.country.lower()}.db")
-                if os.path.exists(local_tmp):
-                    os.remove(local_tmp)
-                subprocess.run([adb, "-P", port, "-s", serial, "pull", remote_tmp, local_tmp],
-                               capture_output=True, text=True, timeout=6, creationflags=creationflags)
-                subprocess.run([adb, "-P", port, "-s", serial, "shell", f"su -c 'rm -f {remote_tmp}'"],
+                local_base = os.path.join(tempfile.gettempdir(), f"sp_ck_{self.country.lower()}.db")
+                for ext in ("", "-wal", "-shm"):
+                    if os.path.exists(local_base + ext):
+                        try:
+                            os.remove(local_base + ext)
+                        except Exception:
+                            pass
+                    subprocess.run([adb, "-P", port, "-s", serial, "pull", f"{remote_base}.db{ext}", local_base + ext],
+                                   capture_output=True, text=True, timeout=6, creationflags=creationflags)
+                subprocess.run([adb, "-P", port, "-s", serial, "shell", f"su -c 'rm -f {remote_base}.db*'"],
                                capture_output=True, text=True, timeout=4, creationflags=creationflags)
-                if not os.path.exists(local_tmp):
+                if not os.path.exists(local_base):
                     continue
-                conn = sqlite3.connect(local_tmp)
+                conn = sqlite3.connect(local_base)
                 rows = conn.execute("SELECT host_key, name, value FROM cookies").fetchall()
                 conn.close()
-                os.remove(local_tmp)
+                for ext in ("", "-wal", "-shm"):
+                    if os.path.exists(local_base + ext):
+                        try:
+                            os.remove(local_base + ext)
+                        except Exception:
+                            pass
                 dom = self.region["domain"]
                 sv_dom = self.region["video_domain"]
                 valid_hosts = {dom, f".{dom}", sv_dom, f".{sv_dom}"}
@@ -251,36 +250,28 @@ class ShopeeAPI:
         return ""
 
     def get_cookie_from_phone(self) -> tuple[bool, str]:
-        """Lấy cookie sạch đang đăng nhập trực tiếp từ đúng app Shopee theo quốc gia trên điện thoại."""
+        """Lấy cookie sạch của đúng app Shopee theo quốc gia mà không làm gián đoạn com.shopee.vn trên cổng 8080."""
         pkg = self.COUNTRY_PKG_MAP.get(self.country, "com.shopee.vn")
         ok, msg = self.connect_adb_spsign()
-        if not ok:
-            ck_fb = self._read_cookie_from_webview_db(pkg)
-            if ck_fb:
-                return True, ck_fb
-            return False, msg
-        base = self._phone_base_url()
-        try:
-            r = requests.post(f"{base}/api/get_app_cookie", json={}, timeout=5)
-            d = r.json()
-        except Exception as e:
-            ck_fb = self._read_cookie_from_webview_db(pkg)
-            if ck_fb:
-                return True, ck_fb
-            return False, f"Lỗi đọc cookie từ SPSign: {e}"
-        ck = (d.get("clean_cookie") or d.get("cookie") or "").strip()
-        if not ck or not d.get("logged_in", True) or (d.get("country") and d.get("country", "").upper() != self.country):
-            ck_fb = self._read_cookie_from_webview_db(pkg)
-            if ck_fb:
-                return True, ck_fb
-            return False, d.get("message") or f"App Shopee {self.country} ({pkg}) trên điện thoại chưa đăng nhập tài khoản!"
-        return True, ck
+        # 1. Nếu cổng 8080 đang chạy đúng app của quốc gia này thì lấy qua API
+        if ok:
+            base = self._phone_base_url()
+            try:
+                r = requests.post(f"{base}/api/get_app_cookie", json={}, timeout=5)
+                d = r.json()
+                ck = (d.get("clean_cookie") or d.get("cookie") or "").strip()
+                if ck and d.get("logged_in", True) and d.get("country", "").upper() == self.country:
+                    return True, ck
+            except Exception:
+                pass
+        # 2. Nếu cổng 8080 đang do app nước khác giữ (vd: com.shopee.vn đang chạy cho tool khác), đọc thẳng DB của pkg (vd: com.shopee.ph)
+        ck_db = self._read_cookie_from_webview_db(pkg)
+        if ck_db:
+            return True, ck_db
+        return False, f"Không tìm thấy Cookie đăng nhập trong ứng dụng {pkg} trên điện thoại! Hãy kiểm tra đã đăng nhập tài khoản trên {pkg} chưa."
 
     def _get_phone_signature(self, url: str, body: str = "", keep_sz_token: bool = False) -> dict:
         """Ký request qua SPSign trên điện thoại (http://127.0.0.1:8080) hoàn toàn miễn phí."""
-        pkg = self.COUNTRY_PKG_MAP.get(self.country, "com.shopee.vn")
-        if getattr(self, "_verified_phone_pkg", None) != pkg:
-            self.connect_adb_spsign()
         base = self._phone_base_url()
         sign_url = f"{base}/?url={quote(url, safe='')}&body={quote(body or '', safe='')}"
         for attempt in range(2):
