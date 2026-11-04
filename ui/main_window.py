@@ -680,15 +680,28 @@ class MainWindow(QMainWindow):
             if ans == QMessageBox.StandardButton.Yes:
                 self._on_country_changed("VN")
 
+        import re
+        m_uid = re.search(r"(?:SPC_U|userid)=(\d+)", res)
+        new_uid = m_uid.group(1) if m_uid else ""
+
         cur = self.txt_cookie.toPlainText().strip()
         existing = parse_cookies(cur)
-        if res not in existing:
-            new_text = (res + ("\n" + cur if cur else "")).strip()
-            self.txt_cookie.setPlainText(new_text)
+        kept = []
+        for ck in existing:
+            if ck == res:
+                continue
+            if new_uid and re.search(rf"(?:SPC_U|userid)={re.escape(new_uid)}\b", ck):
+                continue
+            if self._active_country != "VN" and ("language=vi" in ck or "locale%2Fvi" in ck):
+                continue
+            kept.append(ck)
+        new_text = "\n".join([res] + kept).strip()
+        self.txt_cookie.setPlainText(new_text)
         self._save_settings()
+        pkg = ShopeeAPI.COUNTRY_PKG_MAP.get(self._active_country, f"com.shopee.{self._active_country.lower()}")
         QMessageBox.information(
             self, "Lấy Cookie thành công",
-            f"✅ Đã lấy Cookie sạch từ app Shopee trên điện thoại và lưu vào thị trường {self._active_country}!"
+            f"✅ Đã lấy Cookie sạch từ ứng dụng {pkg} trên điện thoại và lưu vào thị trường {self._active_country}!"
         )
 
     def _use_phone_sign(self):
