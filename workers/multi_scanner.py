@@ -35,8 +35,9 @@ class MultiScanWorker(QThread):
         self.crawl_creators = crawl_creators
         self.crawl_hashtags = crawl_hashtags
         self.credit_budget = credit_budget
-        self.num_threads = max(1, min(num_threads, len(self.cookies)))
+        self.num_threads = max(1, num_threads)
         self._stop = False
+        self._phone_urls: list[str] = []
 
         self.lock = threading.Lock()
         self.cond = threading.Condition(self.lock)
@@ -64,11 +65,19 @@ class MultiScanWorker(QThread):
         try:
             self.progress.emit(f"🌐 Khu vực: {self.country} | 🧵 {self.num_threads} luồng / "
                                f"{len(self.cookies)} cookie")
-            is_phone = "127.0.0.1" in (self.sign_api_url or "") or "localhost" in (self.sign_api_url or "")
-            if is_phone:
-                self.progress.emit("📱 Chế độ ký request: SPSign Điện thoại (Miễn phí)")
-            elif not self.sign_api_key:
-                self.progress.emit("⚠️ Chưa có API key ký request — đang thử tự động dùng SPSign điện thoại.")
+            is_phone = "127.0.0.1" in (self.sign_api_url or "") or "localhost" in (self.sign_api_url or "") or ":808" in (self.sign_api_url or "")
+            if is_phone or not self.sign_api_key:
+                probe = ShopeeAPI(sign_api_url=self.sign_api_url, country=self.country)
+                phones = probe.discover_all_spsign_phones()
+                active = [p for p in phones if p["active"]]
+                self._phone_urls = [p["base_url"] for p in active]
+                if active:
+                    dev_str = ", ".join(f"{p['serial']} (:{p['local_port']})" for p in active)
+                    self.progress.emit(f"📱 Chế độ ký request: {len(active)} điện thoại SPSign song song [{dev_str}]")
+                elif is_phone:
+                    self.progress.emit("📱 Chế độ ký request: SPSign Điện thoại (Miễn phí)")
+                else:
+                    self.progress.emit("⚠️ Chưa có API key ký request — đang thử tự động dùng SPSign điện thoại.")
             threads = []
             for i in range(self.num_threads):
                 t = threading.Thread(target=self._worker, args=(i,), daemon=True)
@@ -116,8 +125,12 @@ class MultiScanWorker(QThread):
         return None
 
     def _worker(self, idx: int):
+        worker_sign_url = (
+            self._phone_urls[idx % len(self._phone_urls)]
+            if self._phone_urls else self.sign_api_url
+        )
         api = ShopeeAPI(cookie="\n".join(self.cookies), delay_ms=self.delay_ms,
-                        sign_api_key=self.sign_api_key, sign_api_url=self.sign_api_url,
+                        sign_api_key=self.sign_api_key, sign_api_url=worker_sign_url,
                         country=self.country)
         if api.cookies:
             api._use_cookie(idx % len(api.cookies))   # mỗi luồng bắt đầu bằng 1 cookie khác nhau

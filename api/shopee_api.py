@@ -121,177 +121,314 @@ class ShopeeAPI:
         "TW": "com.shopee.tw", "BR": "com.shopee.br", "MX": "com.shopee.mx",
         "CO": "com.shopee.co", "CL": "com.shopee.cl",
     }
+    _active_phone_urls: list[str] = []
 
-    def connect_adb_spsign(self) -> tuple[bool, str]:
-        """Tự động forward cổng 8080 qua ADB và kiểm tra SPSign (tuyệt đối không tắt app Shopee đang giữ cổng 8080)."""
-        base = self._phone_base_url()
-        try:
-            r = requests.post(f"{base}/api/debug_info", json={}, timeout=2)
-            d = r.json()
-            if r.status_code == 200 and d.get("code") == 0 and d.get("sdk_loaded"):
-                return True, f"Đã kết nối SPSign [{d.get('package', '')}] ({d.get('brand', '')} {d.get('model', '')} - Android ID: {d.get('android_id', '')})"
-        except Exception:
-            pass
-
+    def discover_all_spsign_phones(self) -> list[dict]:
+        """
+        Tự động dò tất cả điện thoại có cài SPSign đang cắm trên cả 2 cổng ADB (5037, 5038),
+        forward lần lượt ra các cổng PC 8080, 8081, 8082... (giữ nguyên máy đang chiếm 8080),
+        và kích hoạt SPSign trên từng máy mà không tắt app Shopee đang chạy.
+        """
         adb = self.find_adb()
         creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-        serial = ""
-        used_port = "5037"
-        try:
-            for port in ("5037", "5038"):
-                dev_out = subprocess.run([adb, "-P", port, "devices"], capture_output=True, text=True, timeout=6, creationflags=creationflags).stdout
-                serials = [
-                    line.split()[0] for line in dev_out.splitlines()[1:]
-                    if line.strip() and "\tdevice" in line
-                ]
-                if not serials:
-                    continue
-                # Ưu tiên máy TIGER nếu đang cắm chung dàn máy Samsung
-                tiger = [s for s in serials if "TIGER" in s.upper()]
-                serial = tiger[0] if tiger else serials[0]
-                used_port = port
-                subprocess.run([adb, "-P", port, "-s", serial, "forward", "tcp:8080", "tcp:8080"],
-                               capture_output=True, text=True, timeout=6, creationflags=creationflags)
-                if tiger:
-                    break
-            if not serial:
-                return False, "Không tìm thấy điện thoại Android nào đang cắm cáp và bật USB Debugging."
-        except Exception as e:
-            return False, f"Lỗi chạy ADB: {e}"
+        devices: list[tuple[str, str]] = []   # [(adb_port, serial)]
+        seen_serials: set[str] = set()
+        existing_forwards: dict[str, int] = {}   # serial -> local_port
 
+        for port in ("5037", "5038"):
+            try:
+                fwd_out = subprocess.run(
+                    [adb, "-P", port, "forward", "--list"],
+                    capture_output=True, text=True, timeout=5, creationflags=creationflags
+                ).stdout
+                for line in (fwd_out or "").splitlines():
+                    parts = line.split()
+                    if len(parts) >= 3 and parts[1].startswith("tcp:") and parts[2] == "tcp:8080":
+                        try:
+                            existing_forwards[parts[0]] = int(parts[1].split(":")[1])
+                        except Exception:
+                            pass
+
+                dev_out = subprocess.run(
+                    [adb, "-P", port, "devices"],
+                    capture_output=True, text=True, timeout=5, creationflags=creationflags
+                ).stdout
+                for line in (dev_out or "").splitlines()[1:]:
+                    if line.strip() and "\tdevice" in line:
+                        s = line.split()[0]
+                        if s not in seen_serials:
+                            seen_serials.add(s)
+                            devices.append((port, s))
+            except Exception:
+                continue
+
+        # Lọc các máy có cài com.example.spsign (hoặc dòng máy TIGER)
+        spsign_devs: list[tuple[str, str]] = []
+        for port, s in devices:
+            if "TIGER" in s.upper():
+                spsign_devs.append((port, s))
+                continue
+            try:
+                pm = subprocess.run(
+                    [adb, "-P", port, "-s", s, "shell", "pm", "path", "com.example.spsign"],
+                    capture_output=True, text=True, timeout=4, creationflags=creationflags
+                ).stdout
+                if "package:" in (pm or ""):
+                    spsign_devs.append((port, s))
+            except Exception:
+                pass
+
+        if not spsign_devs:
+            return []
+
+        # Ưu tiên máy đang giữ cổng 8080 lên đầu để không bao giờ đổi cổng 8080 của máy đó
+        spsign_devs.sort(key=lambda ps: (0 if existing_forwards.get(ps[1]) == 8080 else 1, ps[1]))
+
+        used_local_ports: set[int] = set()
+        results: list[dict] = []
+        for port, serial in spsign_devs:
+            pref = existing_forwards.get(serial)
+            if pref and 8080 <= pref <= 8099 and pref not in used_local_ports:
+                local_port = pref
+            else:
+                local_port = 8080
+                while local_port in used_local_ports:
+                    local_port += 1
+            used_local_ports.add(local_port)
+
+            try:
+                subprocess.run(
+                    [adb, "-P", port, "-s", serial, "forward", f"tcp:{local_port}", "tcp:8080"],
+                    capture_output=True, text=True, timeout=5, creationflags=creationflags
+                )
+            except Exception:
+                pass
+
+            base_url = f"http://127.0.0.1:{local_port}"
+            info = {}
+            active = False
+            try:
+                r = requests.post(f"{base_url}/api/debug_info", json={}, timeout=1.5)
+                d = r.json()
+                if r.status_code == 200 and d.get("code") == 0:
+                    active = True
+                    info = d
+            except Exception:
+                pass
+
+            if not active:
+                # Tự động tắt Enforce DenyList của Magisk (nếu đang bật làm chặn LSPosed) và mở Shopee
+                try:
+                    subprocess.run(
+                        [adb, "-P", port, "-s", serial, "shell", "su -c 'magisk --denylist disable'"],
+                        capture_output=True, text=True, timeout=4, creationflags=creationflags
+                    )
+                    subprocess.run(
+                        [adb, "-P", port, "-s", serial, "shell", "am", "start", "-n",
+                         "com.shopee.vn/com.shopee.app.ui.home.HomeActivity_"],
+                        capture_output=True, text=True, timeout=5, creationflags=creationflags
+                    )
+                except Exception:
+                    pass
+                for _ in range(4):
+                    time.sleep(1)
+                    try:
+                        r = requests.post(f"{base_url}/api/debug_info", json={}, timeout=1.5)
+                        d = r.json()
+                        if r.status_code == 200 and d.get("code") == 0:
+                            active = True
+                            info = d
+                            break
+                    except Exception:
+                        continue
+
+            results.append({
+                "adb_port": port,
+                "serial": serial,
+                "local_port": local_port,
+                "base_url": base_url,
+                "active": active,
+                "info": info,
+            })
+
+        active_urls = [p["base_url"] for p in results if p["active"]]
+        if active_urls:
+            ShopeeAPI._active_phone_urls = active_urls
+        return results
+
+    def connect_adb_spsign(self) -> tuple[bool, str]:
+        """Tự động kết nối tất cả điện thoại SPSign đang cắm (8080, 8081, 8082...) mà không tắt app đang chạy."""
+        phones = self.discover_all_spsign_phones()
+        active_phones = [p for p in phones if p["active"]]
+        if active_phones:
+            lines = [
+                f"• {p['serial']} → 127.0.0.1:{p['local_port']} [{p['info'].get('package', 'shopee')}]"
+                for p in active_phones
+            ]
+            return True, f"Đã kết nối {len(active_phones)} điện thoại SPSign:\n" + "\n".join(lines)
+
+        # Fallback kiểm tra trực tiếp cổng hiện tại nếu ADB đang bận
+        base = self._phone_base_url()
         try:
             r = requests.post(f"{base}/api/debug_info", json={}, timeout=2)
             d = r.json()
             if r.status_code == 200 and d.get("code") == 0:
+                if base not in ShopeeAPI._active_phone_urls:
+                    ShopeeAPI._active_phone_urls.append(base)
                 return True, f"Đã kết nối SPSign [{d.get('package', '')}] ({d.get('brand', '')} {d.get('model', '')} - Android ID: {d.get('android_id', '')})"
         except Exception:
             pass
 
-        # Chỉ khi cổng 8080 chưa có bất kỳ app Shopee nào chạy thì mới khởi động com.shopee.vn
-        pkg = "com.shopee.vn"
-        try:
-            subprocess.run(
-                [adb, "-P", used_port, "-s", serial, "shell", "am", "start", "-n",
-                 "com.shopee.vn/com.shopee.app.ui.home.HomeActivity_"],
-                capture_output=True, text=True, timeout=6, creationflags=creationflags
-            )
-        except Exception:
-            pass
+        if not phones:
+            return False, "Không tìm thấy điện thoại Android (SPSign) nào đang cắm cáp và bật USB Debugging."
+        return False, "Không kết nối được SPSign trên điện thoại. Hãy kiểm tra LSPosed đã bật module SPSign cho Shopee chưa."
 
-        for _ in range(6):
-            time.sleep(1)
-            try:
-                r = requests.post(f"{base}/api/debug_info", json={}, timeout=2)
-                d = r.json()
-                if r.status_code == 200 and d.get("code") == 0:
-                    return True, f"Đã kết nối SPSign [{d.get('package', '')}] ({d.get('brand', '')} {d.get('model', '')} - Android ID: {d.get('android_id', '')})"
-            except Exception:
-                continue
-        return False, "Không kết nối được SPSign cổng 8080 trên điện thoại. Hãy kiểm tra LSPosed đã bật module SPSign cho Shopee chưa."
-
-    def _read_cookie_from_webview_db(self, pkg: str) -> str:
-        """Đọc trực tiếp SQLite Cookies của đúng app Shopee (vd: com.shopee.ph) mà không đụng tới cổng 8080."""
+    def _read_cookie_from_device_db(self, adb_port: str, serial: str, pkg: str) -> str:
+        """Đọc trực tiếp SQLite Cookies của app Shopee `pkg` trên 1 máy cụ thể mà không đụng tới cổng 8080."""
         import sqlite3
         import tempfile
         adb = self.find_adb()
         creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-        for port in ("5037", "5038"):
-            try:
-                dev_out = subprocess.run([adb, "-P", port, "devices"], capture_output=True, text=True, timeout=5, creationflags=creationflags).stdout
-                serials = [line.split()[0] for line in dev_out.splitlines()[1:] if line.strip() and "\tdevice" in line]
-                if not serials:
-                    continue
-                tiger = [s for s in serials if "TIGER" in s.upper()]
-                serial = tiger[0] if tiger else serials[0]
-                remote_base = f"/sdcard/.sp_ck_{self.country.lower()}"
-                cmd = (
-                    f"db=$(find /data/data/{pkg} -name Cookies | head -n 1); "
-                    f"if [ -n \"$db\" ]; then "
-                    f"cp \"$db\" {remote_base}.db; "
-                    f"[ -f \"${{db}}-wal\" ] && cp \"${{db}}-wal\" {remote_base}.db-wal; "
-                    f"[ -f \"${{db}}-shm\" ] && cp \"${{db}}-shm\" {remote_base}.db-shm; "
-                    f"fi"
-                )
-                subprocess.run([adb, "-P", port, "-s", serial, "shell", f"su -c '{cmd}'"],
+        try:
+            remote_base = f"/sdcard/.sp_ck_{self.country.lower()}"
+            cmd = (
+                f"db=$(find /data/data/{pkg} -name Cookies 2>/dev/null | head -n 1); "
+                f"if [ -n \"$db\" ]; then "
+                f"cp \"$db\" {remote_base}.db; "
+                f"[ -f \"${{db}}-wal\" ] && cp \"${{db}}-wal\" {remote_base}.db-wal; "
+                f"[ -f \"${{db}}-shm\" ] && cp \"${{db}}-shm\" {remote_base}.db-shm; "
+                f"fi"
+            )
+            subprocess.run([adb, "-P", adb_port, "-s", serial, "shell", f"su -c '{cmd}'"],
+                           capture_output=True, text=True, timeout=6, creationflags=creationflags)
+            local_base = os.path.join(tempfile.gettempdir(), f"sp_ck_{serial}_{self.country.lower()}.db")
+            for ext in ("", "-wal", "-shm"):
+                if os.path.exists(local_base + ext):
+                    try:
+                        os.remove(local_base + ext)
+                    except Exception:
+                        pass
+                subprocess.run([adb, "-P", adb_port, "-s", serial, "pull", f"{remote_base}.db{ext}", local_base + ext],
                                capture_output=True, text=True, timeout=6, creationflags=creationflags)
-                local_base = os.path.join(tempfile.gettempdir(), f"sp_ck_{self.country.lower()}.db")
-                for ext in ("", "-wal", "-shm"):
-                    if os.path.exists(local_base + ext):
-                        try:
-                            os.remove(local_base + ext)
-                        except Exception:
-                            pass
-                    subprocess.run([adb, "-P", port, "-s", serial, "pull", f"{remote_base}.db{ext}", local_base + ext],
-                                   capture_output=True, text=True, timeout=6, creationflags=creationflags)
-                subprocess.run([adb, "-P", port, "-s", serial, "shell", f"su -c 'rm -f {remote_base}.db*'"],
-                               capture_output=True, text=True, timeout=4, creationflags=creationflags)
-                if not os.path.exists(local_base):
-                    continue
-                conn = sqlite3.connect(local_base)
-                rows = conn.execute("SELECT host_key, name, value FROM cookies").fetchall()
-                conn.close()
-                for ext in ("", "-wal", "-shm"):
-                    if os.path.exists(local_base + ext):
-                        try:
-                            os.remove(local_base + ext)
-                        except Exception:
-                            pass
-                dom = self.region["domain"]
-                sv_dom = self.region["video_domain"]
-                valid_hosts = {dom, f".{dom}", sv_dom, f".{sv_dom}"}
-                cmap = {}
-                for hk, name, val in rows:
-                    if hk in valid_hosts and name not in ("SPC_EC", "SPC_SEC_SI") and val not in ("-", "null", ""):
-                        cmap[name] = val
-                if cmap.get("SPC_ST") and cmap.get("SPC_U"):
-                    return "; ".join(f"{k}={v}" for k, v in cmap.items())
-            except Exception:
-                continue
+            subprocess.run([adb, "-P", adb_port, "-s", serial, "shell", f"su -c 'rm -f {remote_base}.db*'"],
+                           capture_output=True, text=True, timeout=4, creationflags=creationflags)
+            if not os.path.exists(local_base):
+                return ""
+            conn = sqlite3.connect(local_base)
+            rows = conn.execute("SELECT host_key, name, value FROM cookies").fetchall()
+            conn.close()
+            for ext in ("", "-wal", "-shm"):
+                if os.path.exists(local_base + ext):
+                    try:
+                        os.remove(local_base + ext)
+                    except Exception:
+                        pass
+            dom = self.region["domain"]
+            sv_dom = self.region["video_domain"]
+            valid_hosts = {dom, f".{dom}", sv_dom, f".{sv_dom}"}
+            cmap = {}
+            for hk, name, val in rows:
+                if hk in valid_hosts and name not in ("SPC_EC", "SPC_SEC_SI") and val not in ("-", "null", ""):
+                    cmap[name] = val
+            if cmap.get("SPC_ST") and cmap.get("SPC_U") and str(cmap.get("SPC_U")) != "0":
+                return "; ".join(f"{k}={v}" for k, v in cmap.items())
+        except Exception:
+            pass
         return ""
 
-    def get_cookie_from_phone(self) -> tuple[bool, str]:
-        """Lấy cookie sạch của đúng app Shopee theo quốc gia mà không làm gián đoạn com.shopee.vn trên cổng 8080."""
+    def _read_cookie_from_webview_db(self, pkg: str) -> str:
+        """Đọc Cookie từ máy đầu tiên có đăng nhập `pkg`."""
+        phones = self.discover_all_spsign_phones()
+        for p in phones:
+            ck = self._read_cookie_from_device_db(p["adb_port"], p["serial"], pkg)
+            if ck:
+                return ck
+        return ""
+
+    def get_all_cookies_from_phones(self) -> tuple[bool, list[str], str]:
+        """
+        Quét tất cả điện thoại SPSign đang cắm (1, 2, 3... máy) và lấy toàn bộ Cookie
+        của thị trường `self.country` đang đăng nhập trên từng máy.
+        Trả về (ok, danh_sách_cookie, báo_cáo_chi_tiết).
+        """
         pkg = self.COUNTRY_PKG_MAP.get(self.country, "com.shopee.vn")
-        ok, msg = self.connect_adb_spsign()
-        # 1. Nếu cổng 8080 đang chạy đúng app của quốc gia này thì lấy qua API
-        if ok:
-            base = self._phone_base_url()
-            try:
-                r = requests.post(f"{base}/api/get_app_cookie", json={}, timeout=5)
-                d = r.json()
-                ck = (d.get("clean_cookie") or d.get("cookie") or "").strip()
-                if ck and d.get("logged_in", True) and d.get("country", "").upper() == self.country:
-                    return True, ck
-            except Exception:
-                pass
-        # 2. Nếu cổng 8080 đang do app nước khác giữ (vd: com.shopee.vn đang chạy cho tool khác), đọc thẳng DB của pkg (vd: com.shopee.ph)
-        ck_db = self._read_cookie_from_webview_db(pkg)
-        if ck_db:
-            return True, ck_db
-        return False, f"Không tìm thấy Cookie đăng nhập trong ứng dụng {pkg} trên điện thoại! Hãy kiểm tra đã đăng nhập tài khoản trên {pkg} chưa."
+        phones = self.discover_all_spsign_phones()
+        if not phones:
+            return False, [], "Không tìm thấy điện thoại SPSign nào đang cắm cáp USB Debugging."
+
+        cookies: list[str] = []
+        seen_uids: set[str] = set()
+        report: list[str] = []
+
+        for p in phones:
+            serial = p["serial"]
+            lport = p["local_port"]
+            ck = ""
+            # 1. Nếu cổng của máy này đang chạy đúng app của quốc gia đang chọn thì ưu tiên hỏi API
+            if p["active"] and p["info"].get("package") == pkg:
+                try:
+                    r = requests.post(f"{p['base_url']}/api/get_app_cookie", json={}, timeout=4)
+                    d = r.json()
+                    cand = (d.get("clean_cookie") or d.get("cookie") or "").strip()
+                    if cand and d.get("logged_in", True) and d.get("country", "").upper() == self.country:
+                        ck = cand
+                except Exception:
+                    pass
+            # 2. Đọc trực tiếp SQLite Cookies của app `pkg` trên máy đó (không ảnh hưởng cổng 8080)
+            if not ck:
+                ck = self._read_cookie_from_device_db(p["adb_port"], serial, pkg)
+
+            if ck:
+                m_uid = re.search(r"(?:SPC_U|userid)=(\d+)", ck)
+                m_usr = re.search(r"username=([^;\s]+)", ck)
+                uid = m_uid.group(1) if m_uid else ""
+                usr = m_usr.group(1) if m_usr else uid
+                if uid and uid in seen_uids:
+                    report.append(f"ℹ️ Máy {serial} (:8080→:{lport}): Trùng tài khoản {usr} (SPC_U={uid})")
+                else:
+                    if uid:
+                        seen_uids.add(uid)
+                    cookies.append(ck)
+                    report.append(f"✅ Máy {serial} (:8080→:{lport}): Đã lấy Cookie {self.country} (user={usr})")
+            else:
+                report.append(f"⚠️ Máy {serial} (:8080→:{lport}): Chưa đăng nhập tài khoản trên {pkg}")
+
+        if not cookies:
+            return False, [], f"Chưa máy nào đăng nhập ứng dụng {pkg} ({self.country}):\n" + "\n".join(report)
+        return True, cookies, "\n".join(report)
+
+    def get_cookie_from_phone(self) -> tuple[bool, str]:
+        """Lấy toàn bộ cookie sạch của đúng app Shopee theo quốc gia từ tất cả điện thoại đang cắm."""
+        ok, cookies, report = self.get_all_cookies_from_phones()
+        if not ok:
+            return False, report
+        return True, "\n".join(cookies)
 
     def _get_phone_signature(self, url: str, body: str = "", keep_sz_token: bool = False) -> dict:
-        """Ký request qua SPSign trên điện thoại (http://127.0.0.1:8080) hoàn toàn miễn phí."""
-        base = self._phone_base_url()
-        sign_url = f"{base}/?url={quote(url, safe='')}&body={quote(body or '', safe='')}"
+        """Ký request qua SPSign trên điện thoại (tự động phân tải & dự phòng qua các cổng 8080, 8081, 8082...)."""
+        primary = self._phone_base_url()
+        candidates = [primary] + [u for u in ShopeeAPI._active_phone_urls if u != primary]
         for attempt in range(2):
-            try:
-                resp = requests.post(sign_url, timeout=10)
-                data = resp.json()
-                if resp.status_code == 200 and data.get("code") in (0, None):
-                    sig = data.get("data") or {}
-                    if isinstance(sig, dict):
-                        if not keep_sz_token:
-                            # Loại bỏ af-ac-enc-sz-token bản cũ để tương thích với luồng appver=29531 không bị 418
-                            sig.pop("af-ac-enc-sz-token", None)
-                        return {str(k): str(v) for k, v in sig.items()}
-                self.last_error = f"SPSign lỗi: {data.get('message') or data}"
-            except Exception as e:
-                if attempt == 0:
-                    ok, _ = self.connect_adb_spsign()
-                    if ok:
-                        continue
-                self.last_error = f"SPSign lỗi kết nối ({base}): {e}"
+            for base in candidates:
+                sign_url = f"{base}/?url={quote(url, safe='')}&body={quote(body or '', safe='')}"
+                try:
+                    resp = requests.post(sign_url, timeout=10)
+                    data = resp.json()
+                    if resp.status_code == 200 and data.get("code") in (0, None):
+                        sig = data.get("data") or {}
+                        if isinstance(sig, dict):
+                            if not keep_sz_token:
+                                # Loại bỏ af-ac-enc-sz-token bản cũ để tương thích với luồng appver=29531 không bị 418
+                                sig.pop("af-ac-enc-sz-token", None)
+                            return {str(k): str(v) for k, v in sig.items()}
+                    self.last_error = f"SPSign lỗi ({base}): {data.get('message') or data}"
+                except Exception as e:
+                    self.last_error = f"SPSign lỗi kết nối ({base}): {e}"
+            if attempt == 0:
+                ok, _ = self.connect_adb_spsign()
+                if ok:
+                    candidates = [primary] + [u for u in ShopeeAPI._active_phone_urls if u != primary]
+                    continue
         return {}
 
     def get_signature(self, url: str, body: str = "", keep_sz_token: bool = False) -> dict:

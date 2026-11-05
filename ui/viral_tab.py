@@ -187,7 +187,7 @@ class ViralTab(QWidget):
         kw_form.addRow("Chạy song song:", self.spin_threads)
         k_lay.addLayout(kw_form)
         self.lbl_credit = QLabel("1 trang hashtag (12 video) hoặc 1 trang creator (48 video) ≈ 1 credit.\n"
-                                 "Nhiều luồng = nhanh hơn, KHÔNG giảm credit; tối đa = số cookie đang có.")
+                                 "Nhiều luồng = nhanh hơn (tự động chia tải qua các điện thoại SPSign 8080, 8081, 8082... và các cookie đang có).")
         self.lbl_credit.setStyleSheet("color: #c0392b; font-size: 11px;")
         self.lbl_credit.setWordWrap(True)
         k_lay.addWidget(self.lbl_credit)

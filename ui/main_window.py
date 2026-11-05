@@ -658,50 +658,43 @@ class MainWindow(QMainWindow):
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
             api = ShopeeAPI(sign_api_url=PHONE_SIGN_URL, country=self._active_country)
-            ok, res = api.get_cookie_from_phone()
+            ok, new_cookies, report = api.get_all_cookies_from_phones()
         finally:
             QApplication.restoreOverrideCursor()
         if not ok:
-            QMessageBox.warning(self, "Lỗi lấy Cookie từ Điện thoại", res)
+            QMessageBox.warning(self, "Lỗi lấy Cookie từ Điện thoại", report)
             return
 
-        # Kiểm tra nếu Cookie lấy từ app Shopee Việt Nam (com.shopee.vn) nhưng đang chọn quốc gia khác (vd: PH)
-        is_vn_cookie = ("language=vi" in res or "locale%2Fvi" in res)
-        if is_vn_cookie and self._active_country != "VN":
-            ans = QMessageBox.question(
-                self,
-                "Khác quốc gia với Cookie trên điện thoại",
-                f"Điện thoại đang chạy app Shopee Việt Nam (com.shopee.vn), nhưng trên phần mềm bạn đang chọn thị trường '{self._active_country}'.\n\n"
-                f"Cookie của Shopee Việt Nam chỉ dùng được cho thị trường Việt Nam (VN) (dùng cho {self._active_country} sẽ báo lỗi HTTP 403).\n\n"
-                f"Bạn có muốn chuyển Quốc gia mục tiêu về '🇻🇳 Việt Nam (VN)' và lưu Cookie này vào VN luôn không?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.Yes,
-            )
-            if ans == QMessageBox.StandardButton.Yes:
-                self._on_country_changed("VN")
-
         import re
-        m_uid = re.search(r"(?:SPC_U|userid)=(\d+)", res)
-        new_uid = m_uid.group(1) if m_uid else ""
+        new_uids = set()
+        for ck in new_cookies:
+            m_uid = re.search(r"(?:SPC_U|userid)=(\d+)", ck)
+            if m_uid:
+                new_uids.add(m_uid.group(1))
 
         cur = self.txt_cookie.toPlainText().strip()
         existing = parse_cookies(cur)
         kept = []
         for ck in existing:
-            if ck == res:
+            if ck in new_cookies:
                 continue
-            if new_uid and re.search(rf"(?:SPC_U|userid)={re.escape(new_uid)}\b", ck):
+            m_old = re.search(r"(?:SPC_U|userid)=(\d+)", ck)
+            if m_old and m_old.group(1) in new_uids:
                 continue
             if self._active_country != "VN" and ("language=vi" in ck or "locale%2Fvi" in ck):
                 continue
             kept.append(ck)
-        new_text = "\n".join([res] + kept).strip()
+        all_cookies = new_cookies + kept
+        new_text = "\n".join(all_cookies).strip()
         self.txt_cookie.setPlainText(new_text)
+        if hasattr(self, "viral_tab") and hasattr(self.viral_tab, "spin_threads") and len(all_cookies) > 1:
+            self.viral_tab.spin_threads.setValue(max(self.viral_tab.spin_threads.value(), len(all_cookies)))
         self._save_settings()
         pkg = ShopeeAPI.COUNTRY_PKG_MAP.get(self._active_country, f"com.shopee.{self._active_country.lower()}")
         QMessageBox.information(
-            self, "Lấy Cookie thành công",
-            f"✅ Đã lấy Cookie sạch từ ứng dụng {pkg} trên điện thoại và lưu vào thị trường {self._active_country}!"
+            self, "Lấy Cookie từ Điện thoại thành công",
+            f"✅ Đã lấy {len(new_cookies)} Cookie từ ứng dụng {pkg} ({self._active_country}) "
+            f"(Tổng: {len(all_cookies)} cookie):\n\n{report}"
         )
 
     def _use_phone_sign(self):
