@@ -662,16 +662,30 @@ class ViralTab(QWidget):
         )
         b_cancel = box.addButton("Hủy", QMessageBox.ButtonRole.RejectRole)
         box.exec()
+        from utils.gsheet import extract_product_key, _format_product_urls
+
+        def _dedup_products(vlist: list) -> list:
+            seen_p = set()
+            out = []
+            for v in vlist:
+                pk = extract_product_key(_format_product_urls(v))
+                if pk and pk in seen_p:
+                    continue
+                if pk:
+                    seen_p.add(pk)
+                out.append(v)
+            return out
+
         clicked = box.clickedButton()
         if clicked == b_cancel or clicked is None:
             return []
         if b_vis and clicked == b_vis:
-            return visible
+            return _dedup_products(visible)
         if b_flt and clicked == b_flt:
-            return filtered_all
+            return _dedup_products(filtered_all)
         if b_duet and clicked == b_duet:
-            return all_duet_sp
-        return visible
+            return _dedup_products(all_duet_sp)
+        return _dedup_products(visible)
 
     def _export(self):
         result = self._export_source()

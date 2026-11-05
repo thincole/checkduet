@@ -154,22 +154,43 @@ def _prepare_tab(sh, tab: str):
     return ws, ""
 
 
-def new_videos(videos: list, existing_ids: set) -> tuple[list, int]:
-    """Bỏ video đã có trong sheet và video lặp trong chính lô này. Trả về (video mới, số bị bỏ)."""
-    seen, out, skipped = set(existing_ids), [], 0
+PRODUCT_URL_COL = HEADERS.index("Link SP") + 1
+
+
+def extract_product_key(url_or_text: str) -> str:
+    """Trích mã định danh sản phẩm (shopid_itemid hoặc URL dòng đầu) để lọc trùng sản phẩm."""
+    s = str(url_or_text or "").strip()
+    if not s:
+        return ""
+    first_line = s.splitlines()[0].strip()
+    m = re.search(r"/product/(\d+)/(\d+)", first_line)
+    if m:
+        return f"{m.group(1)}_{m.group(2)}"
+    return first_line
+
+
+def new_videos(videos: list, existing_ids: set, existing_products: set | None = None) -> tuple[list, int]:
+    """Bỏ video đã có trong sheet và lọc trùng theo cả Video ID lẫn Sản phẩm (Link SP)."""
+    seen_ids = set(existing_ids)
+    seen_prods = set(existing_products or set())
+    out, skipped = [], 0
     for v in videos:
         vid = str(v.get("video_id") or "").strip()
-        if not vid or vid in seen:
+        p_urls = _format_product_urls(v)
+        pkey = extract_product_key(p_urls)
+        if not vid or vid in seen_ids or (pkey and pkey in seen_prods):
             skipped += 1
             continue
-        seen.add(vid)
+        seen_ids.add(vid)
+        if pkey:
+            seen_prods.add(pkey)
         out.append(v)
     return out, skipped
 
 
 def push(videos: list, cred_path: str, sheet: str, tab: str) -> dict:
     """
-    Ghi tiếp videos vào tab cố định, lọc trùng theo Video ID với dữ liệu đã có.
+    Ghi tiếp videos vào tab cố định, lọc trùng theo cả Video ID và Sản phẩm (Link SP) với dữ liệu đã có.
     Trả về {ok, added, skipped, total, sheet, url} hoặc {ok: False, error}.
     """
     try:
@@ -177,15 +198,20 @@ def push(videos: list, cred_path: str, sheet: str, tab: str) -> dict:
         ws, err = _prepare_tab(sh, tab)
         if err:
             return {"ok": False, "error": err}
-        existing = {x.strip() for x in ws.col_values(VIDEO_ID_COL)[1:] if x.strip()}
-        fresh, skipped = new_videos(videos, existing)
+        existing_ids = {x.strip() for x in ws.col_values(VIDEO_ID_COL)[1:] if x.strip()}
+        existing_prods = {
+            extract_product_key(x)
+            for x in ws.col_values(PRODUCT_URL_COL)[1:]
+            if extract_product_key(x)
+        }
+        fresh, skipped = new_videos(videos, existing_ids, existing_prods)
         if fresh:
             rows = to_rows(fresh)
             chunk_size = 5000
             for i in range(0, len(rows), chunk_size):
                 ws.append_rows(rows[i:i + chunk_size], table_range="A1",
                                value_input_option=gspread.utils.ValueInputOption.user_entered)
-        return {"ok": True, "added": len(fresh), "skipped": skipped, "total": len(existing) + len(fresh),
+        return {"ok": True, "added": len(fresh), "skipped": skipped, "total": len(existing_ids) + len(fresh),
                 "sheet": tab, "url": f"{sh.url}#gid={ws.id}"}
     except Exception as e:
         return {"ok": False, "error": _friendly(e, cred_path)}
