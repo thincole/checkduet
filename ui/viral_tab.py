@@ -614,25 +614,64 @@ class ViralTab(QWidget):
                 f"→ hạ 'View/ngày ≥' / 'Lượt xem ≥'")
 
     def _export_source(self) -> list:
-        """Video để xuất: danh sách viral đang hiện; nếu rỗng thì hỏi xuất video có duet / tất cả."""
-        result = self.table.visible_videos()
-        if result:
-            return result
+        """Video để xuất: nếu bảng đang bị giới hạn bởi bộ lọc / Top thì hỏi người dùng muốn xuất tập nào."""
         if not self._videos:
-            QMessageBox.information(self, "Không có dữ liệu", "Chưa quét video nào!")
+            QMessageBox.information(self, "Không có dữ liệu", "Chưa có video nào trong kho!")
             return []
-        duet = [v for v in self._videos if v.get("allow_duet")]
+
+        visible = self.table.visible_videos()
+        sort_key = self.cbo_sort.currentData()
+        filtered_all = filter_viral(
+            self._videos,
+            max_age_days      = self.spin_age.value(),
+            min_views         = self.spin_views.value(),
+            min_likes         = self.spin_likes.value(),
+            min_views_per_day = self.spin_vpd.value(),
+            min_sold          = self.spin_sold.value(),
+            duet_only         = self.chk_duet.isChecked(),
+            sort_by           = sort_key,
+            top_n             = 0,
+        )
+        all_duet_sp = [
+            v for v in self._videos
+            if v.get("allow_duet") and ResultTable.has_product_link(v)
+        ]
+        all_duet_sp.sort(key=lambda x: (x.get(sort_key) or 0, x.get("play_count") or 0), reverse=True)
+
+        if visible and len(visible) >= len(all_duet_sp) and len(visible) >= len(filtered_all):
+            return visible
+
         box = QMessageBox(self)
-        box.setWindowTitle("Không có video đạt tiêu chí viral")
-        box.setText(f"Không video nào đạt tiêu chí hiện tại ({self._diagnose()}).\n\n"
-                    f"Bạn muốn xuất danh sách nào?")
-        b_duet = box.addButton(f"Video có duet ({len(duet)})", QMessageBox.ButtonRole.AcceptRole)
-        b_all = box.addButton(f"Tất cả đã quét ({len(self._videos)})", QMessageBox.ButtonRole.AcceptRole)
-        box.addButton("Hủy", QMessageBox.ButtonRole.RejectRole)
+        box.setWindowTitle("Chọn danh sách video cần xuất")
+        msg_lines = [
+            f"• Hiện trong bảng (theo bộ lọc & giới hạn Top={self.spin_top.value() or 'Tất cả'}): {len(visible):,} video",
+            f"• Đạt bộ lọc hiện tại (không giới hạn Top): {len(filtered_all):,} video",
+            f"• Toàn bộ kho Có Duet + SP (bỏ qua lọc view/đã bán): {len(all_duet_sp):,} video",
+            "",
+            "Bạn muốn xuất danh sách nào?",
+        ]
+        box.setText("\n".join(msg_lines))
+        b_vis = box.addButton(f"Hiện trong bảng ({len(visible):,})", QMessageBox.ButtonRole.AcceptRole) if visible else None
+        b_flt = (
+            box.addButton(f"Đạt bộ lọc ({len(filtered_all):,})", QMessageBox.ButtonRole.AcceptRole)
+            if len(filtered_all) > len(visible) else None
+        )
+        b_duet = (
+            box.addButton(f"Tất cả Có Duet + SP ({len(all_duet_sp):,})", QMessageBox.ButtonRole.AcceptRole)
+            if len(all_duet_sp) > max(len(visible), len(filtered_all)) else None
+        )
+        b_cancel = box.addButton("Hủy", QMessageBox.ButtonRole.RejectRole)
         box.exec()
-        chosen = duet if box.clickedButton() == b_duet else self._videos if box.clickedButton() == b_all else []
-        key = self.cbo_sort.currentData()
-        return sorted(chosen, key=lambda x: (x.get(key) or 0, x.get("play_count") or 0), reverse=True)
+        clicked = box.clickedButton()
+        if clicked == b_cancel or clicked is None:
+            return []
+        if b_vis and clicked == b_vis:
+            return visible
+        if b_flt and clicked == b_flt:
+            return filtered_all
+        if b_duet and clicked == b_duet:
+            return all_duet_sp
+        return visible
 
     def _export(self):
         result = self._export_source()

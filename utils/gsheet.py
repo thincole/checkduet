@@ -180,8 +180,11 @@ def push(videos: list, cred_path: str, sheet: str, tab: str) -> dict:
         existing = {x.strip() for x in ws.col_values(VIDEO_ID_COL)[1:] if x.strip()}
         fresh, skipped = new_videos(videos, existing)
         if fresh:
-            ws.append_rows(to_rows(fresh), table_range="A1",
-                           value_input_option=gspread.utils.ValueInputOption.user_entered)
+            rows = to_rows(fresh)
+            chunk_size = 5000
+            for i in range(0, len(rows), chunk_size):
+                ws.append_rows(rows[i:i + chunk_size], table_range="A1",
+                               value_input_option=gspread.utils.ValueInputOption.user_entered)
         return {"ok": True, "added": len(fresh), "skipped": skipped, "total": len(existing) + len(fresh),
                 "sheet": tab, "url": f"{sh.url}#gid={ws.id}"}
     except Exception as e:
