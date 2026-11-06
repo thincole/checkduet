@@ -77,7 +77,7 @@ class VideoStore:
         return out
 
     def add_video(self, v: dict, country: str) -> bool:
-        """Thêm/cập nhật 1 video vào bộ đệm và tự động ghi xuống đĩa mỗi 100 video hoặc mỗi 3 giây."""
+        """Thêm/cập nhật 1 video vào bộ đệm và tự động ghi xuống đĩa mỗi 100 video hoặc mỗi 30 giây."""
         vid = str(v.get("video_id") or "")
         if not vid:
             return False
@@ -85,9 +85,14 @@ class VideoStore:
         key = (cc, vid)
         now = time.time()
         self._pending[key] = (json.dumps(v, ensure_ascii=False), now)
-        if len(self._pending) >= 100 or (now - self._last_save_ts) >= 3.0:
+        if len(self._pending) >= 100 or (now - self._last_save_ts) >= 30.0:
             self.save()
         return True
+
+    def maybe_save(self, max_items: int = 100, max_age_sec: float = 30.0):
+        """Ghi xuống đĩa nếu đã đủ 100 video mới hoặc đã qua 30 giây."""
+        if self._pending and (len(self._pending) >= max_items or (time.time() - self._last_save_ts) >= max_age_sec):
+            self.save()
 
     def _exists(self, cc: str, vid: str) -> bool:
         return self._conn.execute(

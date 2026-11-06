@@ -87,7 +87,13 @@ class WindowsStore:
             self._pend_prod[item_id] = (str(shop_id), name or (prev[1] if prev else ""))
             self._pend_link.add((item_id, vid))
         now = time.time()
-        if len(self._pend_link) >= 200 or (now - self._last_save_ts) >= 3.0:
+        if len(self._pend_link) >= 100 or (now - self._last_save_ts) >= 30.0:
+            self.save()
+
+    def maybe_save(self, max_items: int = 100, max_age_sec: float = 30.0):
+        if (self._pend_prod or self._pend_link) and (
+            len(self._pend_link) >= max_items or (time.time() - self._last_save_ts) >= max_age_sec
+        ):
             self.save()
 
     def save(self):
