@@ -169,28 +169,23 @@ def extract_product_key(url_or_text: str) -> str:
     return first_line
 
 
-def new_videos(videos: list, existing_ids: set, existing_products: set | None = None) -> tuple[list, int]:
-    """Bỏ video đã có trong sheet và lọc trùng theo cả Video ID lẫn Sản phẩm (Link SP)."""
+def new_videos(videos: list, existing_ids: set) -> tuple[list, int]:
+    """Bỏ các video đã có trên Google Sheet (lọc trùng theo Video ID)."""
     seen_ids = set(existing_ids)
-    seen_prods = set(existing_products or set())
     out, skipped = [], 0
     for v in videos:
         vid = str(v.get("video_id") or "").strip()
-        p_urls = _format_product_urls(v)
-        pkey = extract_product_key(p_urls)
-        if not vid or vid in seen_ids or (pkey and pkey in seen_prods):
+        if not vid or vid in seen_ids:
             skipped += 1
             continue
         seen_ids.add(vid)
-        if pkey:
-            seen_prods.add(pkey)
         out.append(v)
     return out, skipped
 
 
 def push(videos: list, cred_path: str, sheet: str, tab: str) -> dict:
     """
-    Ghi tiếp videos vào tab cố định, lọc trùng theo cả Video ID và Sản phẩm (Link SP) với dữ liệu đã có.
+    Ghi tiếp videos vào tab cố định, lọc trùng theo Video ID với các video đã có trên Google Sheet.
     Trả về {ok, added, skipped, total, sheet, url} hoặc {ok: False, error}.
     """
     try:
@@ -199,12 +194,7 @@ def push(videos: list, cred_path: str, sheet: str, tab: str) -> dict:
         if err:
             return {"ok": False, "error": err}
         existing_ids = {x.strip() for x in ws.col_values(VIDEO_ID_COL)[1:] if x.strip()}
-        existing_prods = {
-            extract_product_key(x)
-            for x in ws.col_values(PRODUCT_URL_COL)[1:]
-            if extract_product_key(x)
-        }
-        fresh, skipped = new_videos(videos, existing_ids, existing_prods)
+        fresh, skipped = new_videos(videos, existing_ids)
         if fresh:
             rows = to_rows(fresh)
             chunk_size = 5000
