@@ -26,6 +26,11 @@ class VideoStore:
             "PRIMARY KEY (country, video_id))"
         )
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_country ON videos(country)")
+        self._conn.execute(
+            "CREATE TABLE IF NOT EXISTS scanned_creators ("
+            "country TEXT NOT NULL, profile_id TEXT NOT NULL, video_count INTEGER DEFAULT 0, updated REAL, "
+            "PRIMARY KEY (country, profile_id))"
+        )
         self._conn.commit()
         self._pending: dict[tuple, tuple] = {}   # (country, vid) → (data_json, ts); gom lại, flush định kỳ
         self._last_save_ts = time.time()
@@ -135,6 +140,24 @@ class VideoStore:
         self._pending = {k: v for k, v in self._pending.items() if k[0] != cc}
         self._conn.execute("DELETE FROM videos WHERE country=?", (cc,))
         self._conn.commit()
+
+    def mark_creator_scanned(self, profile_id: str, country: str, video_count: int = 0):
+        """Đánh dấu 1 Profile ID đã cào xong để các phiên sau không cào trùng lại."""
+        pid = str(profile_id or "").strip()
+        if not pid:
+            return
+        cc = (country or "VN").upper()
+        self._conn.execute(
+            "INSERT OR REPLACE INTO scanned_creators(country, profile_id, video_count, updated) VALUES (?,?,?,?)",
+            (cc, pid, int(video_count or 0), time.time())
+        )
+        self._conn.commit()
+
+    def get_scanned_creators(self, country: str) -> set[str]:
+        """Lấy tập hợp các Profile ID đã cào xong của quốc gia này."""
+        cc = (country or "VN").upper()
+        cur = self._conn.execute("SELECT profile_id FROM scanned_creators WHERE country=?", (cc,))
+        return {str(r[0]) for r in cur if r[0]}
 
     def close(self):
         self.save()

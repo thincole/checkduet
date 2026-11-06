@@ -19,6 +19,7 @@ from utils.viral import enrich, filter_viral
 from utils.exporter import export_csv
 from ui.phone_dialog import open_phone_page
 from ui.gsheet_action import export_gsheet
+import config.settings as cfg_mgr
 
 # Kho tên hashtag ứng viên; app tự đổi sang hashtag_id đúng theo quốc gia rồi lấy top theo post_count.
 # Gồm tag Shopee Video quốc tế + tag đặc thù từng thị trường.
@@ -345,9 +346,18 @@ class ViralTab(QWidget):
             return
         self.cfg["last_import_path"] = path
         if content:
-            self.txt_seeds.setPlainText(content)
-            seeds = self._lines(content)
-            self.log_status(f"📂 Đã import {len(seeds)} KOC/Shop từ {path}")
+            country = self.cbo_country.currentData() or "VN"
+            scanned = self.video_store.get_scanned_creators(country) if self.video_store else set()
+            all_lines = self._lines(content)
+            kept = [s for s in all_lines if s not in scanned]
+            skipped = len(all_lines) - len(kept)
+            self.txt_seeds.setPlainText("\n".join(kept))
+            self.cfg["viral_seeds"] = self.txt_seeds.toPlainText().strip()
+            cfg_mgr.save(self.cfg)
+            msg = f"📂 Đã import {len(kept)} KOC/Shop từ {path}"
+            if skipped:
+                msg += f" (đã bỏ qua {skipped} ID từng cào trước đó)"
+            self.log_status(msg)
 
     def _on_tags_changed(self):
         tags = self._parse_tags()
@@ -443,11 +453,23 @@ class ViralTab(QWidget):
         if not rt["cookie"]:
             QMessageBox.warning(self, "Thiếu Cookie", "Vui lòng nhập Cookie trong tab Cài đặt!")
             return
-        seeds = self._lines(self.txt_seeds.toPlainText())
+        country = rt.get("country", "VN")
+        scanned = self.video_store.get_scanned_creators(country) if self.video_store else set()
+        raw_seeds = self._lines(self.txt_seeds.toPlainText())
+        seeds = [s for s in raw_seeds if s not in scanned]
+        skipped_pre = len(raw_seeds) - len(seeds)
+        if skipped_pre > 0:
+            self._set_seeds_lines(seeds)
         tags = self._parse_tags()
         if not seeds and not tags:
-            QMessageBox.warning(self, "Thiếu nguồn",
-                                "Nhập ít nhất 1 KOC/shop hoặc 1 hashtag!")
+            if skipped_pre > 0:
+                QMessageBox.information(
+                    self, "Đã cào hết danh sách",
+                    f"Tất cả {skipped_pre} Profile ID trong ô nguồn đều đã được cào ở phiên trước và đã được xóa đi!"
+                )
+            else:
+                QMessageBox.warning(self, "Thiếu nguồn",
+                                    "Nhập ít nhất 1 KOC/shop hoặc 1 hashtag!")
             return
 
         # Chỉ khi người dùng có điền hashtag ở ô Hashtag nguồn thì mới tìm/lan theo hashtag
@@ -455,6 +477,8 @@ class ViralTab(QWidget):
 
         # Giữ lại video đã có trong kho; quét mới gộp/cập nhật vào, không xóa
         self.txt_log.clear()
+        if skipped_pre > 0:
+            self.log(f"⏭ Đã tự động xóa {skipped_pre} Profile ID đã cào ở phiên trước khỏi ô nguồn.")
         self.btn_start.setEnabled(False)
         self.btn_stop.setEnabled(True)
         self.progress_bar.setVisible(True)
@@ -464,25 +488,55 @@ class ViralTab(QWidget):
                  + (f" (đã có {kept} video trong kho)" if kept else ""))
 
         self.worker = MultiScanWorker(
-            shop_list       = [(s, "") for s in seeds],
-            cookie          = rt["cookie"],
-            delay_ms        = rt["delay_ms"],
-            max_videos      = self.spin_per_creator.value(),
-            sign_api_key    = rt["sign_api_key"],
-            sign_api_url    = rt["sign_api_url"],
-            country         = rt.get("country", "VN"),
-            hashtags        = tags,
-            hashtag_videos  = self.spin_per_tag.value(),
-            crawl_creators  = self.chk_crawl.isChecked(),
-            crawl_hashtags  = crawl_hashtags,
-            credit_budget   = self.spin_budget.value(),
-            num_threads     = self.spin_threads.value(),
+            shop_list        = [(s, "") for s in seeds],
+            cookie           = rt["cookie"],
+            delay_ms         = rt["delay_ms"],
+            max_videos       = self.spin_per_creator.value(),
+            sign_api_key     = rt["sign_api_key"],
+            sign_api_url     = rt["sign_api_url"],
+            country          = country,
+            hashtags         = tags,
+            hashtag_videos   = self.spin_per_tag.value(),
+            crawl_creators   = self.chk_crawl.isChecked(),
+            crawl_hashtags   = crawl_hashtags,
+            credit_budget    = self.spin_budget.value(),
+            num_threads      = self.spin_threads.value(),
+            scanned_creators = scanned,
         )
         self.worker.progress.connect(self.log)
         self.worker.video_found.connect(self._on_video)
+        self.worker.creator_done.connect(self._on_creator_done)
         self.worker.all_done.connect(self._on_done)
         self.worker.error.connect(lambda m: self.log(f"❌ ERROR: {m}"))
         self.worker.start()
+
+    def _set_seeds_lines(self, lines: list[str]):
+        """Cập nhật ô KOC/Shop nguồn mà vẫn giữ vị trí thanh cuộn và lưu ngay vào settings.json."""
+        sb = self.txt_seeds.verticalScrollBar()
+        pos = sb.value() if sb else 0
+        new_text = "\n".join(lines)
+        self.txt_seeds.setPlainText(new_text)
+        if sb:
+            sb.setValue(min(pos, sb.maximum()))
+        self.cfg["viral_seeds"] = new_text.strip()
+        try:
+            cfg_mgr.save(self.cfg)
+        except Exception:
+            pass
+
+    def _on_creator_done(self, raw_seed: str, profile_id: str, count: int):
+        """Khi 1 Profile ID cào xong: lưu lịch sử vào SQLite và xóa ngay khỏi ô KOC/Shop nguồn."""
+        country = self.cbo_country.currentData() or "VN"
+        if self.video_store is not None:
+            if profile_id:
+                self.video_store.mark_creator_scanned(profile_id, country, count)
+            if raw_seed and raw_seed != profile_id:
+                self.video_store.mark_creator_scanned(raw_seed, country, count)
+        cur_lines = self._lines(self.txt_seeds.toPlainText())
+        targets = {s for s in (raw_seed.strip(), profile_id.strip()) if s}
+        new_lines = [l for l in cur_lines if l not in targets]
+        if len(new_lines) != len(cur_lines):
+            self._set_seeds_lines(new_lines)
 
     def _stop(self):
         if self.worker:

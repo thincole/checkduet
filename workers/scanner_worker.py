@@ -148,6 +148,7 @@ class ScannerWorker(QThread):
 
     # ──────────────────────────────────────────────────────────
     def _do_creator(self, n: int, profile_id: str, label: str):
+        raw_seed = str(profile_id)
         self.progress.emit(f"[{n}] 🔍 Creator: {label}")
         if not profile_id.isdigit():
             resolved = self.api.resolve_short_link(profile_id)
@@ -162,6 +163,7 @@ class ScannerWorker(QThread):
             profile_id = resolved
         if profile_id in self._scanned_creators:
             self.progress.emit("  ↪ Đã quét rồi, bỏ qua.")
+            self.shop_done.emit(raw_seed, 0, 0, 0)
             return
         self._scanned_creators.add(profile_id)
 
@@ -180,7 +182,14 @@ class ScannerWorker(QThread):
         self._track_timeline(videos)
         allow, deny = self._emit(videos)
         icon = "⚠️" if (self.api.last_error and not videos) else "✅"
-        self.shop_done.emit(profile_id, allow + deny, allow, deny)
+        aborted = (
+            self._stop
+            or not self._budget_left()
+            or self._creators_off
+            or (bool(self.api.last_error) and not videos and len(self.api.dead_cookies) >= len(self.api.cookies))
+        )
+        if not aborted:
+            self.shop_done.emit(raw_seed, allow + deny, allow, deny)
         self.progress.emit(f"  {icon} {allow + deny} video | ✅ Duet: {allow} | ❌ No duet: {deny}")
 
     def _track_timeline(self, videos: list):

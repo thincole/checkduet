@@ -834,7 +834,13 @@ class MainWindow(QMainWindow):
             self.result_table.filter_duet_only(True)
 
     def _on_shop_done(self, profile_id: str, total: int, allow: int, deny: int):
-        pass  # đã log trong worker
+        if self.video_store and profile_id:
+            self.video_store.mark_creator_scanned(profile_id, self._active_country, total)
+        cur_lines = [l.strip() for l in self.txt_shops.toPlainText().splitlines() if l.strip()]
+        target = str(profile_id or "").strip()
+        new_lines = [l for l in cur_lines if l != target]
+        if len(new_lines) != len(cur_lines):
+            self.txt_shops.setPlainText("\n".join(new_lines))
 
     def _on_all_done(self, total: int, allow: int):
         self.windows_store.save()

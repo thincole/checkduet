@@ -13,15 +13,17 @@ from api.shopee_api import ShopeeAPI, parse_cookies
 
 
 class MultiScanWorker(QThread):
-    progress    = pyqtSignal(str)
-    video_found = pyqtSignal(dict)
-    all_done    = pyqtSignal(int, int)
-    error       = pyqtSignal(str)
+    progress     = pyqtSignal(str)
+    video_found  = pyqtSignal(dict)
+    creator_done = pyqtSignal(str, str, int)   # raw_seed, resolved_profile_id, video_count
+    all_done     = pyqtSignal(int, int)
+    error        = pyqtSignal(str)
 
     def __init__(self, shop_list, cookie, delay_ms=500, max_videos=0,
                  sign_api_key="", sign_api_url="", country="VN",
                  hashtags=None, hashtag_videos=24, crawl_creators=False,
-                 crawl_hashtags=False, credit_budget=0, num_threads=1, parent=None):
+                 crawl_hashtags=False, credit_budget=0, num_threads=1,
+                 scanned_creators=None, parent=None):
         super().__init__(parent)
         self.seed_creators = [(str(p), n) for p, n in shop_list]
         self.seed_tags = list(hashtags or [])
@@ -45,7 +47,7 @@ class MultiScanWorker(QThread):
         self.total_allow = 0
         self.request_count = 0
         self._seen_videos: set[str] = set()
-        self._scanned_creators: set[str] = set()
+        self._scanned_creators: set[str] = set(str(x) for x in (scanned_creators or []) if x)
         self._scanned_tags: set[str] = set()
         self._creator_score: dict[str, int] = {}
         self._tag_score: dict[str, int] = {}
@@ -168,6 +170,7 @@ class MultiScanWorker(QThread):
 
     # ──────────────────────────────────────────────────────────
     def _do_creator(self, api, profile_id, label):
+        raw_seed = str(profile_id)
         self.progress.emit(f"🔍 Creator: {label}")
         if not profile_id.isdigit():
             resolved = api.resolve_short_link(profile_id)
@@ -178,11 +181,17 @@ class MultiScanWorker(QThread):
                 return
             with self.lock:
                 if resolved in self._scanned_creators:
+                    self.progress.emit(f"  ⏭ Creator {resolved} đã cào trước đó, bỏ qua.")
+                    self.creator_done.emit(raw_seed, str(resolved), 0)
                     return
                 self._scanned_creators.add(resolved)
             profile_id = resolved
         else:
             with self.lock:
+                if not str(label).startswith("🕸") and profile_id in self._scanned_creators:
+                    self.progress.emit(f"  ⏭ Creator {profile_id} đã cào trước đó, bỏ qua.")
+                    self.creator_done.emit(raw_seed, str(profile_id), 0)
+                    return
                 self._scanned_creators.add(profile_id)
 
         videos = api.get_all_videos(profile_id, max_videos=self.max_videos,
@@ -193,6 +202,14 @@ class MultiScanWorker(QThread):
         allow, deny = self._emit(videos)
         icon = "⚠️" if (api.last_error and not videos) else "✅"
         self.progress.emit(f"  {icon} {label}: {allow + deny} video | ✅ Duet: {allow}")
+        aborted = (
+            self._stop
+            or not self._budget_left()
+            or self._creators_off
+            or (bool(api.last_error) and not videos and len(api.dead_cookies) >= len(api.cookies))
+        )
+        if not aborted:
+            self.creator_done.emit(raw_seed, str(profile_id), allow + deny)
 
     def _track_timeline(self, api, videos):
         """Sau 3 creator liên tiếp bị 400002 thì ngừng quét creator (mỗi creator tốn 1 credit mà vẫn lỗi)."""
