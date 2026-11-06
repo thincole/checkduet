@@ -709,6 +709,9 @@ class ViralTab(QWidget):
             "Bạn muốn xuất danh sách nào?",
         ]
         box.setText("\n".join(msg_lines))
+        chk_dedup_sp = QCheckBox("Lọc trùng sản phẩm (mỗi link SP chỉ giữ 1 video nhiều view nhất)")
+        chk_dedup_sp.setChecked(True)
+        box.setCheckBox(chk_dedup_sp)
         b_vis = box.addButton(f"Hiện trong bảng ({len(visible):,})", QMessageBox.ButtonRole.AcceptRole) if visible else None
         b_flt = (
             box.addButton(f"Đạt bộ lọc ({len(filtered_all):,})", QMessageBox.ButtonRole.AcceptRole)
@@ -723,6 +726,8 @@ class ViralTab(QWidget):
         from utils.gsheet import extract_product_key, _format_product_urls
 
         def _dedup_products(vlist: list) -> list:
+            if not chk_dedup_sp.isChecked():
+                return vlist
             seen_p = set()
             out = []
             for v in vlist:
@@ -732,6 +737,8 @@ class ViralTab(QWidget):
                 if pk:
                     seen_p.add(pk)
                 out.append(v)
+            if len(out) < len(vlist):
+                self.log(f"🧹 Lọc trùng SP: từ {len(vlist):,} video → giữ {len(out):,} sản phẩm duy nhất (bỏ {len(vlist) - len(out):,} video trùng SP).")
             return out
 
         clicked = box.clickedButton()
