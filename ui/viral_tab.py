@@ -699,35 +699,9 @@ class ViralTab(QWidget):
         if visible and len(visible) >= len(all_duet_sp) and len(visible) >= len(filtered_all):
             return visible
 
-        box = QMessageBox(self)
-        box.setWindowTitle("Chọn danh sách video cần xuất")
-        msg_lines = [
-            f"• Hiện trong bảng (theo bộ lọc & giới hạn Top={self.spin_top.value() or 'Tất cả'}): {len(visible):,} video",
-            f"• Đạt bộ lọc hiện tại (không giới hạn Top): {len(filtered_all):,} video",
-            f"• Toàn bộ kho Có Duet + SP (bỏ qua lọc view/đã bán): {len(all_duet_sp):,} video",
-            "",
-            "Bạn muốn xuất danh sách nào?",
-        ]
-        box.setText("\n".join(msg_lines))
-        chk_dedup_sp = QCheckBox("Lọc trùng sản phẩm (mỗi link SP chỉ giữ 1 video nhiều view nhất)")
-        chk_dedup_sp.setChecked(True)
-        box.setCheckBox(chk_dedup_sp)
-        b_vis = box.addButton(f"Hiện trong bảng ({len(visible):,})", QMessageBox.ButtonRole.AcceptRole) if visible else None
-        b_flt = (
-            box.addButton(f"Đạt bộ lọc ({len(filtered_all):,})", QMessageBox.ButtonRole.AcceptRole)
-            if len(filtered_all) > len(visible) else None
-        )
-        b_duet = (
-            box.addButton(f"Tất cả Có Duet + SP ({len(all_duet_sp):,})", QMessageBox.ButtonRole.AcceptRole)
-            if len(all_duet_sp) > max(len(visible), len(filtered_all)) else None
-        )
-        b_cancel = box.addButton("Hủy", QMessageBox.ButtonRole.RejectRole)
-        box.exec()
         from utils.gsheet import extract_product_key, _format_product_urls
 
         def _dedup_products(vlist: list) -> list:
-            if not chk_dedup_sp.isChecked():
-                return vlist
             seen_p = set()
             out = []
             for v in vlist:
@@ -737,9 +711,37 @@ class ViralTab(QWidget):
                 if pk:
                     seen_p.add(pk)
                 out.append(v)
-            if len(out) < len(vlist):
-                self.log(f"🧹 Lọc trùng SP: từ {len(vlist):,} video → giữ {len(out):,} sản phẩm duy nhất (bỏ {len(vlist) - len(out):,} video trùng SP).")
             return out
+
+        dedup_duet_sp = _dedup_products(all_duet_sp)
+        dup_count = len(all_duet_sp) - len(dedup_duet_sp)
+
+        box = QMessageBox(self)
+        box.setWindowTitle("Chọn danh sách video cần xuất")
+        msg_lines = [
+            f"• Hiện trong bảng (Top={self.spin_top.value() or 'Tất cả'}): {len(visible):,} video",
+            f"• Đạt bộ lọc hiện tại: {len(filtered_all):,} video",
+            f"• Toàn bộ kho Có Duet + SP: {len(all_duet_sp):,} video",
+            f"   ↳ Sau khi lọc trùng sản phẩm: còn {len(dedup_duet_sp):,} sản phẩm duy nhất (loại bỏ {dup_count:,} video gắn trùng link SP)",
+            "",
+            "Bạn muốn xuất danh sách nào?",
+        ]
+        box.setText("\n".join(msg_lines))
+        b_vis = box.addButton(f"Hiện trong bảng ({len(visible):,})", QMessageBox.ButtonRole.AcceptRole) if visible else None
+        b_flt = (
+            box.addButton(f"Đạt bộ lọc ({len(filtered_all):,})", QMessageBox.ButtonRole.AcceptRole)
+            if len(filtered_all) > len(visible) else None
+        )
+        b_duet_dedup = (
+            box.addButton(f"Tất cả SP duy nhất - Lọc trùng ({len(dedup_duet_sp):,})", QMessageBox.ButtonRole.AcceptRole)
+            if dedup_duet_sp else None
+        )
+        b_duet_all = (
+            box.addButton(f"Tất cả Video Duet+SP - Không lọc trùng ({len(all_duet_sp):,})", QMessageBox.ButtonRole.AcceptRole)
+            if len(all_duet_sp) > len(dedup_duet_sp) else None
+        )
+        b_cancel = box.addButton("Hủy", QMessageBox.ButtonRole.RejectRole)
+        box.exec()
 
         clicked = box.clickedButton()
         if clicked == b_cancel or clicked is None:
@@ -748,9 +750,11 @@ class ViralTab(QWidget):
             return _dedup_products(visible)
         if b_flt and clicked == b_flt:
             return _dedup_products(filtered_all)
-        if b_duet and clicked == b_duet:
-            return _dedup_products(all_duet_sp)
-        return _dedup_products(visible)
+        if b_duet_dedup and clicked == b_duet_dedup:
+            return dedup_duet_sp
+        if b_duet_all and clicked == b_duet_all:
+            return all_duet_sp
+        return dedup_duet_sp
 
     def _export(self):
         result = self._export_source()
