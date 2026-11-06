@@ -182,12 +182,17 @@ class ScannerWorker(QThread):
         self._track_timeline(videos)
         allow, deny = self._emit(videos)
         icon = "⚠️" if (self.api.last_error and not videos) else "✅"
+        all_cookies_dead = bool(self.api.cookies) and len(self.api.dead_cookies) >= len(self.api.cookies)
         aborted = (
             self._stop
             or not self._budget_left()
             or self._creators_off
-            or (bool(self.api.last_error) and not videos and len(self.api.dead_cookies) >= len(self.api.cookies))
+            or bool(self.api.last_error)
+            or all_cookies_dead
         )
+        if all_cookies_dead and not self._stop:
+            self.progress.emit("🛑 Tất cả cookie đều đã lỗi/hết hạn — tự động dừng quét, giữ nguyên danh sách Profile ID!")
+            self.stop()
         if not aborted:
             self.shop_done.emit(raw_seed, allow + deny, allow, deny)
         self.progress.emit(f"  {icon} {allow + deny} video | ✅ Duet: {allow} | ❌ No duet: {deny}")

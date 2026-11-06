@@ -202,12 +202,17 @@ class MultiScanWorker(QThread):
         allow, deny = self._emit(videos)
         icon = "⚠️" if (api.last_error and not videos) else "✅"
         self.progress.emit(f"  {icon} {label}: {allow + deny} video | ✅ Duet: {allow}")
+        all_cookies_dead = bool(api.cookies) and len(api.dead_cookies) >= len(api.cookies)
         aborted = (
             self._stop
             or not self._budget_left()
             or self._creators_off
-            or (bool(api.last_error) and not videos and len(api.dead_cookies) >= len(api.cookies))
+            or bool(api.last_error)
+            or all_cookies_dead
         )
+        if all_cookies_dead and not self._stop:
+            self.progress.emit("🛑 Tất cả cookie đều đã lỗi/hết hạn — tự động dừng quét, giữ nguyên danh sách Profile ID!")
+            self.stop()
         if not aborted:
             self.creator_done.emit(raw_seed, str(profile_id), allow + deny)
 
@@ -248,6 +253,9 @@ class MultiScanWorker(QThread):
         allow, deny = self._emit(videos)
         icon = "⚠️" if (api.last_error and not videos) else "✅"
         self.progress.emit(f"  {icon} {name}: {allow + deny} video mới | ✅ Duet: {allow}")
+        if bool(api.cookies) and len(api.dead_cookies) >= len(api.cookies) and not self._stop:
+            self.progress.emit("🛑 Tất cả cookie đều đã lỗi/hết hạn — tự động dừng quét!")
+            self.stop()
 
     def _emit(self, videos):
         """Phát video chưa thấy, cập nhật điểm lan (an toàn luồng). Trả về (allow, deny)."""
