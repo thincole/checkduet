@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 import time
 import uuid
 import requests
@@ -122,6 +123,9 @@ class ShopeeAPI:
         "CO": "com.shopee.co", "CL": "com.shopee.cl",
     }
     _active_phone_urls: list[str] = []
+    _cookie_refresh_lock = threading.Lock()
+    _last_cookie_refresh_ts: float = 0.0
+    _latest_refreshed_cookies: list[str] = []
 
     def discover_all_spsign_phones(self) -> list[dict]:
         """
@@ -699,11 +703,44 @@ class ShopeeAPI:
 
         return all_videos
 
+    def _auto_refresh_phone_cookies(self) -> bool:
+        """Tự động đọc lại Cookie mới nhất từ các điện thoại đang cắm ADB khi cookie cũ trong RAM hết hạn."""
+        with ShopeeAPI._cookie_refresh_lock:
+            now = time.time()
+            # Nếu luồng khác vừa làm mới cookie trong vòng 60s thì dùng luôn bộ cookie mới đó
+            if (
+                ShopeeAPI._latest_refreshed_cookies
+                and (now - ShopeeAPI._last_cookie_refresh_ts) < 60.0
+                and self.cookies != ShopeeAPI._latest_refreshed_cookies
+            ):
+                self.cookies = list(ShopeeAPI._latest_refreshed_cookies)
+                self.dead_cookies.clear()
+                self._use_cookie(self.cookie_idx % len(self.cookies))
+                return True
+            if (now - ShopeeAPI._last_cookie_refresh_ts) < 60.0:
+                return False
+            self._log("  🔄 Đang tự động làm mới Cookie trực tiếp từ điện thoại...")
+            ShopeeAPI._last_cookie_refresh_ts = now
+            try:
+                ok, fresh, _ = self.get_all_cookies_from_phones()
+            except Exception:
+                return False
+            if not ok or not fresh:
+                return False
+            ShopeeAPI._latest_refreshed_cookies = list(fresh)
+            self.cookies = list(fresh)
+            self.dead_cookies.clear()
+            self._use_cookie(self.cookie_idx % len(self.cookies))
+            self._log(f"  ✅ Đã tự động cập nhật {len(fresh)} Cookie mới từ điện thoại — tiếp tục quét!")
+            return True
+
     def _signed_get(self, url: str, debug_name: str) -> dict | None:
         """
         Gửi GET đã ký tới sv host. Trả về JSON, hoặc None và đặt last_error.
-        Nếu lỗi do cookie (hết hạn / captcha / bị chặn) thì xoay sang cookie khác và gửi lại.
+        Nếu lỗi do cookie (hết hạn / captcha / bị chặn) thì xoay sang cookie khác,
+        và nếu hết cả dàn thì tự động kéo lại cookie mới nhất từ điện thoại qua ADB.
         """
+        refreshed_once = False
         while True:
             data, cookie_problem = self._signed_get_once(url, debug_name)
             if data is not None:
@@ -711,10 +748,14 @@ class ShopeeAPI:
                 return data
             if not cookie_problem:
                 return None
-            if not self._rotate_cookie(cookie_problem):
-                self.last_error = (f"Tất cả {len(self.cookies)} cookie đều lỗi "
-                                   f"(lần cuối: {self.last_error}). Vui lòng thay cookie mới.")
-                return None
+            if self._rotate_cookie(cookie_problem):
+                continue
+            if not refreshed_once and self._auto_refresh_phone_cookies():
+                refreshed_once = True
+                continue
+            self.last_error = (f"Tất cả {len(self.cookies)} cookie đều lỗi "
+                               f"(lần cuối: {self.last_error}). Vui lòng thay cookie mới.")
+            return None
 
     def _signed_get_once(self, url: str, debug_name: str) -> tuple[dict | None, str]:
         """1 lần gửi. Trả về (data, "") khi thành công, (None, lý do) khi lỗi do cookie, (None, "") lỗi khác."""
