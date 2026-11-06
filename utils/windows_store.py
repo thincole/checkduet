@@ -7,6 +7,7 @@ import json
 import os
 import re
 import sqlite3
+import time
 
 import requests
 
@@ -55,6 +56,7 @@ class WindowsStore:
         self._conn.commit()
         self._pend_prod: dict[str, tuple] = {}     # item_id → (shop_id, name)
         self._pend_link: set[tuple] = set()         # (item_id, video_id)
+        self._last_save_ts: float = time.time()
         self._migrate_json()
 
     def _migrate_json(self):
@@ -84,6 +86,9 @@ class WindowsStore:
             # giữ tên nếu đã có; chỉ ghi tên khi có tên mới
             self._pend_prod[item_id] = (str(shop_id), name or (prev[1] if prev else ""))
             self._pend_link.add((item_id, vid))
+        now = time.time()
+        if len(self._pend_link) >= 200 or (now - self._last_save_ts) >= 3.0:
+            self.save()
 
     def save(self):
         if self._pend_prod:
@@ -100,6 +105,7 @@ class WindowsStore:
             self._conn.commit()
             self._pend_prod.clear()
             self._pend_link.clear()
+            self._last_save_ts = time.time()
 
     def count(self, item_id: str) -> tuple[str, int]:
         self.save()

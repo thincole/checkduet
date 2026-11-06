@@ -27,7 +27,9 @@ class VideoStore:
         )
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_country ON videos(country)")
         self._conn.commit()
-        self._pending: dict[tuple, tuple] = {}   # (country, vid) → (data_json, ts); gom lại, flush 1 lần
+        self._pending: dict[tuple, tuple] = {}   # (country, vid) → (data_json, ts); gom lại, flush định kỳ
+        self._last_save_ts = time.time()
+        self._saved_since_ckpt = 0
         self._migrate_json()
 
     # ------------------------------------------------------------------
@@ -70,15 +72,17 @@ class VideoStore:
         return out
 
     def add_video(self, v: dict, country: str) -> bool:
-        """Thêm/cập nhật 1 video vào bộ đệm (flush khi save). True nếu là video_id mới."""
+        """Thêm/cập nhật 1 video vào bộ đệm và tự động ghi xuống đĩa mỗi 100 video hoặc mỗi 3 giây."""
         vid = str(v.get("video_id") or "")
         if not vid:
             return False
         cc = (country or "VN").upper()
         key = (cc, vid)
-        is_new = key not in self._pending and not self._exists(cc, vid)
-        self._pending[key] = (json.dumps(v, ensure_ascii=False), time.time())
-        return is_new
+        now = time.time()
+        self._pending[key] = (json.dumps(v, ensure_ascii=False), now)
+        if len(self._pending) >= 100 or (now - self._last_save_ts) >= 3.0:
+            self.save()
+        return True
 
     def _exists(self, cc: str, vid: str) -> bool:
         return self._conn.execute(
@@ -97,7 +101,15 @@ class VideoStore:
         self._conn.executemany(
             "INSERT OR REPLACE INTO videos(video_id, country, data, updated) VALUES (?,?,?,?)", rows)
         self._conn.commit()
+        self._saved_since_ckpt += len(rows)
         self._pending.clear()
+        self._last_save_ts = time.time()
+        if self._saved_since_ckpt >= 1000:
+            try:
+                self._conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
+            except Exception:
+                pass
+            self._saved_since_ckpt = 0
 
     def delete_video(self, vid: str, country: str):
         self.delete_videos([vid], country)

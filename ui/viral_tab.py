@@ -588,6 +588,9 @@ class ViralTab(QWidget):
         )
 
     def _refresh(self, *_):
+        self.video_store.save()
+        if self.windows_store:
+            self.windows_store.save()
         self._videos = list(self._videos_by_id.values())   # dựng lại từ nguồn chuẩn (dedup)
         result = self._current()
         self.table.set_videos(result)
