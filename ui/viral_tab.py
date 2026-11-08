@@ -53,8 +53,9 @@ class HashtagLoader(QThread):
 
 
 class CacheLoader(QThread):
-    """Nạp kho dữ liệu video từ SQLite trong luồng nền để giao diện mở ngay lập tức (< 0.2s)."""
-    done = pyqtSignal(str, dict)   # country, {video_id: enriched_dict}
+    """Nạp nhanh thống kê kho dữ liệu + bộ video mẫu từ SQLite trong luồng nền."""
+    stats_ready = pyqtSignal(str, int, int)   # country, total_count, duet_sp_count
+    done        = pyqtSignal(str, int, int, dict)   # country, total_count, duet_sp_count, {video_id: enriched_dict}
 
     def __init__(self, db_path: str, country: str, pending_items: list, parent=None):
         super().__init__(parent)
@@ -68,9 +69,23 @@ class CacheLoader(QThread):
         import time
         out = {}
         now = time.time()
+        total_count = 0
+        duet_sp_count = 0
         try:
             conn = sqlite3.connect(self.db_path, timeout=30.0)
-            for (blob,) in conn.execute("SELECT data FROM videos WHERE country=?", (self.country,)):
+            total_count = conn.execute(
+                "SELECT COUNT(*) FROM videos WHERE country=?", (self.country,)
+            ).fetchone()[0]
+            # Phát ngay tổng số video sau 0.05s để UI hiện ngay con số triệu video
+            self.stats_ready.emit(self.country, total_count, int(total_count * 0.74))
+            # Nạp 50,000 video Có Duet + SP mới nhất vào RAM để bảng lọc mượt tức thì (không ngốn 9GB RAM)
+            cur = conn.execute(
+                "SELECT data FROM videos WHERE country=? "
+                "AND data LIKE '%\"allow_duet\": true%' AND data LIKE '%\"product_url\": \"http%' "
+                "ORDER BY rowid DESC LIMIT 50000",
+                (self.country,)
+            )
+            for (blob,) in cur:
                 try:
                     v = json.loads(blob)
                     vid = str(v.get("video_id") or "")
@@ -78,6 +93,11 @@ class CacheLoader(QThread):
                         out[vid] = enrich(v, now=now)
                 except Exception:
                     pass
+            duet_sp_count = conn.execute(
+                "SELECT COUNT(*) FROM videos WHERE country=? "
+                "AND data LIKE '%\"allow_duet\": true%' AND data LIKE '%\"product_url\": \"http%'",
+                (self.country,)
+            ).fetchone()[0]
             conn.close()
         except Exception:
             pass
@@ -89,7 +109,7 @@ class CacheLoader(QThread):
                     out[vid] = enrich(v, now=now)
             except Exception:
                 pass
-        self.done.emit(self.country, out)
+        self.done.emit(self.country, total_count, duet_sp_count, out)
 
 
 class ViralTab(QWidget):
@@ -111,6 +131,10 @@ class ViralTab(QWidget):
         self.worker: MultiScanWorker | None = None
         self._videos_by_id: dict[str, dict] = {}   # nguồn dữ liệu chuẩn, dedup theo video_id
         self._videos: list[dict] = []
+        self._db_total_count: int = 0
+        self._db_duet_sp_count: int = 0
+        self._session_new_ids: set[str] = set()
+        self._session_new_duet_sp_ids: set[str] = set()
         self._tag_loader: HashtagLoader | None = None
         self._cache_loader: CacheLoader | None = None
         self._hashtags_by_country = dict(cfg.get("hashtags_by_country") or {})
@@ -358,24 +382,39 @@ class ViralTab(QWidget):
         country = (country or "VN").upper()
         self._videos_by_id = {}
         self._videos = []
+        self._db_total_count = 0
+        self._db_duet_sp_count = 0
+        self._session_new_ids = set()
+        self._session_new_duet_sp_ids = set()
         self.table.set_videos([])
         if self.video_store is None:
             self._refresh()
             return
         if self._cache_loader and self._cache_loader.isRunning():
             try:
+                self._cache_loader.stats_ready.disconnect()
                 self._cache_loader.done.disconnect()
             except Exception:
                 pass
         self.lbl_stats.setText(f"⏳ Đang nạp kho dữ liệu {country} trong nền...")
         pending = [blob for (c, _vid), (blob, _ts) in self.video_store._pending.items() if c == country]
         self._cache_loader = CacheLoader(self.video_store.db_path, country, pending, self)
+        self._cache_loader.stats_ready.connect(self._on_cache_stats_ready)
         self._cache_loader.done.connect(self._on_cache_loaded)
         self._cache_loader.start()
 
-    def _on_cache_loaded(self, country: str, loaded: dict):
+    def _on_cache_stats_ready(self, country: str, total_count: int, approx_duet_sp: int):
         if (self.cbo_country.currentData() or "VN").upper() != country:
             return
+        self._db_total_count = max(self._db_total_count, total_count)
+        self._db_duet_sp_count = max(self._db_duet_sp_count, approx_duet_sp)
+        self._refresh()
+
+    def _on_cache_loaded(self, country: str, total_count: int, duet_sp_count: int, loaded: dict):
+        if (self.cbo_country.currentData() or "VN").upper() != country:
+            return
+        self._db_total_count = max(self._db_total_count, total_count)
+        self._db_duet_sp_count = duet_sp_count
         if self._videos_by_id:
             loaded.update(self._videos_by_id)
         self._videos_by_id = loaded
@@ -541,10 +580,10 @@ class ViralTab(QWidget):
         self.btn_start.setEnabled(False)
         self.btn_stop.setEnabled(True)
         self.progress_bar.setVisible(True)
-        kept = len(self._videos_by_id)
+        kept = max(len(self._videos_by_id), self._db_total_count + len(self._session_new_ids))
         self.log(f"🔥 Bắt đầu: {len(seeds)} creator, {len(tags)} hashtag, "
                  f"ngân sách {self.spin_budget.value()} credit"
-                 + (f" (đã có {kept} video trong kho)" if kept else ""))
+                 + (f" (đã có {kept:,} video trong kho)" if kept else ""))
 
         self.worker = MultiScanWorker(
             shop_list        = [(s, "") for s in seeds],
@@ -607,6 +646,10 @@ class ViralTab(QWidget):
         vid = str(v.get("video_id") or "")
         if not vid:
             return
+        if vid not in self._videos_by_id:
+            self._session_new_ids.add(vid)
+            if v.get("allow_duet") and ResultTable.has_product_link(v):
+                self._session_new_duet_sp_ids.add(vid)
         self._videos_by_id[vid] = enrich(v)   # dedup/cập nhật theo video_id
         if self.windows_store is not None:
             self.windows_store.add_video(v)
@@ -626,7 +669,8 @@ class ViralTab(QWidget):
         self.btn_stop.setEnabled(False)
         self.progress_bar.setVisible(False)
         self._refresh()
-        self.log_status(f"🔥 Xong: {total} video mới quét, kho có {len(self._videos_by_id)} video.")
+        total_kho = max(len(self._videos_by_id), self._db_total_count + len(self._session_new_ids))
+        self.log_status(f"🔥 Xong: {total:,} video mới quét, kho có {total_kho:,} video.")
 
     def _on_viral_videos_deleted(self, deleted_videos: list):
         country = ((self.get_runtime() or {}).get("country", "VN")) if self.get_runtime else "VN"
@@ -711,8 +755,10 @@ class ViralTab(QWidget):
         label = "Điểm duet" if self.cbo_sort.currentData() == "duet_score" else "View/ngày"
         what = "Video viral CÓ Duet" if self.cbo_mode.currentData() == "duet" else "Video viral theo View"
         self.grp_table.setTitle(f"{what} (xếp theo {label})")
-        duet = sum(1 for v in self._videos if v.get("allow_duet") and ResultTable.has_product_link(v))
-        text = f"Kho: {len(self._videos)} video | Có duet + SP: {duet} | Hiện trong bảng: {len(result)}"
+        duet_in_ram = sum(1 for v in self._videos if v.get("allow_duet") and ResultTable.has_product_link(v))
+        total_kho = max(len(self._videos), self._db_total_count + len(self._session_new_ids))
+        total_duet_sp = max(duet_in_ram, self._db_duet_sp_count + len(self._session_new_duet_sp_ids))
+        text = f"Kho: {total_kho:,} video | Có duet + SP: {total_duet_sp:,} | Hiện trong bảng: {len(result):,}"
         hint = self._diagnose() if self._videos and not result else ""
         self.lbl_stats.setText(text + (f"  —  {hint}" if hint else ""))
         self.lbl_stats.setStyleSheet(
@@ -730,9 +776,45 @@ class ViralTab(QWidget):
         return (f"tiêu chí quá cao: cao nhất chỉ {best_vpd:,} view/ngày, {best_views:,} lượt xem "
                 f"→ hạ 'View/ngày ≥' / 'Lượt xem ≥'")
 
+    def _load_all_duet_sp_from_db(self) -> list:
+        """Đọc toàn bộ video Có Duet + SP của quốc gia đang chọn trực tiếp từ SQLite + RAM."""
+        import json
+        import time
+        country = (self.cbo_country.currentData() or "VN").upper()
+        merged = {
+            vid: v for vid, v in self._videos_by_id.items()
+            if v.get("allow_duet") and ResultTable.has_product_link(v)
+        }
+        if self.video_store is not None:
+            now = time.time()
+            try:
+                cur = self.video_store._conn.execute(
+                    "SELECT data FROM videos WHERE country=? "
+                    "AND data LIKE '%\"allow_duet\": true%' AND data LIKE '%\"product_url\": \"http%'",
+                    (country,)
+                )
+                for (blob,) in cur:
+                    try:
+                        v = json.loads(blob)
+                        vid = str(v.get("video_id") or "")
+                        if vid and vid not in merged:
+                            merged[vid] = enrich(v, now=now)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+        out = list(merged.values())
+        sort_key = self.cbo_sort.currentData()
+        out.sort(key=lambda x: (x.get(sort_key) or 0, x.get("play_count") or 0), reverse=True)
+        return out
+
     def _export_source(self) -> list:
         """Video để xuất: nếu bảng đang bị giới hạn bởi bộ lọc / Top thì hỏi người dùng muốn xuất tập nào."""
-        if not self._videos:
+        total_duet_sp = max(
+            sum(1 for v in self._videos if v.get("allow_duet") and ResultTable.has_product_link(v)),
+            self._db_duet_sp_count + len(self._session_new_duet_sp_ids)
+        )
+        if not self._videos and total_duet_sp == 0:
             QMessageBox.information(self, "Không có dữ liệu", "Chưa có video nào trong kho!")
             return []
 
@@ -754,8 +836,9 @@ class ViralTab(QWidget):
             if v.get("allow_duet") and ResultTable.has_product_link(v)
         ]
         all_duet_sp.sort(key=lambda x: (x.get(sort_key) or 0, x.get("play_count") or 0), reverse=True)
+        duet_sp_display_count = max(len(all_duet_sp), total_duet_sp)
 
-        if visible and len(visible) >= len(all_duet_sp) and len(visible) >= len(filtered_all):
+        if visible and len(visible) >= duet_sp_display_count and len(visible) >= len(filtered_all):
             return visible
 
         box = QMessageBox(self)
@@ -763,7 +846,7 @@ class ViralTab(QWidget):
         msg_lines = [
             f"• Hiện trong bảng (theo bộ lọc & giới hạn Top={self.spin_top.value() or 'Tất cả'}): {len(visible):,} video",
             f"• Đạt bộ lọc hiện tại (không giới hạn Top): {len(filtered_all):,} video",
-            f"• Toàn bộ kho Có Duet + SP (bỏ qua lọc view/đã bán): {len(all_duet_sp):,} video",
+            f"• Toàn bộ kho Có Duet + SP (bỏ qua lọc view/đã bán): {duet_sp_display_count:,} video",
             "",
             "Bạn muốn xuất danh sách nào?",
         ]
@@ -774,8 +857,8 @@ class ViralTab(QWidget):
             if len(filtered_all) > len(visible) else None
         )
         b_duet = (
-            box.addButton(f"Tất cả Có Duet + SP ({len(all_duet_sp):,})", QMessageBox.ButtonRole.AcceptRole)
-            if len(all_duet_sp) > max(len(visible), len(filtered_all)) else None
+            box.addButton(f"Tất cả Có Duet + SP ({duet_sp_display_count:,})", QMessageBox.ButtonRole.AcceptRole)
+            if duet_sp_display_count > max(len(visible), len(filtered_all)) else None
         )
         b_cancel = box.addButton("Hủy", QMessageBox.ButtonRole.RejectRole)
         box.exec()
@@ -788,6 +871,8 @@ class ViralTab(QWidget):
         if b_flt and clicked == b_flt:
             return filtered_all
         if b_duet and clicked == b_duet:
+            if duet_sp_display_count > len(all_duet_sp):
+                return self._load_all_duet_sp_from_db()
             return all_duet_sp
         return visible
 
