@@ -15,7 +15,8 @@ def enrich(v: dict, now: float | None = None) -> dict:
         age = max((now - ct) / 86400, 0.5)  # tránh chia cho số quá nhỏ với video vừa đăng
         v["age_days"] = round(age, 1)
         v["views_per_day"] = int(views / age)
-        v["post_date"] = datetime.fromtimestamp(ct).strftime("%Y-%m-%d")
+        if not v.get("post_date"):
+            v["post_date"] = datetime.fromtimestamp(ct).strftime("%Y-%m-%d")
     else:
         v["age_days"] = None
         v["views_per_day"] = 0

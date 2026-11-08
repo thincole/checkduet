@@ -52,6 +52,46 @@ class HashtagLoader(QThread):
         self.done.emit(self.country, tags)
 
 
+class CacheLoader(QThread):
+    """Nạp kho dữ liệu video từ SQLite trong luồng nền để giao diện mở ngay lập tức (< 0.2s)."""
+    done = pyqtSignal(str, dict)   # country, {video_id: enriched_dict}
+
+    def __init__(self, db_path: str, country: str, pending_items: list, parent=None):
+        super().__init__(parent)
+        self.db_path = db_path
+        self.country = (country or "VN").upper()
+        self.pending_items = pending_items
+
+    def run(self):
+        import json
+        import sqlite3
+        import time
+        out = {}
+        now = time.time()
+        try:
+            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            for (blob,) in conn.execute("SELECT data FROM videos WHERE country=?", (self.country,)):
+                try:
+                    v = json.loads(blob)
+                    vid = str(v.get("video_id") or "")
+                    if vid:
+                        out[vid] = enrich(v, now=now)
+                except Exception:
+                    pass
+            conn.close()
+        except Exception:
+            pass
+        for blob in self.pending_items:
+            try:
+                v = json.loads(blob)
+                vid = str(v.get("video_id") or "")
+                if vid:
+                    out[vid] = enrich(v, now=now)
+            except Exception:
+                pass
+        self.done.emit(self.country, out)
+
+
 class ViralTab(QWidget):
     def __init__(self, cfg: dict, get_runtime: Callable[[], dict], log_status: Callable[[str], None],
                  windows_store=None, video_store=None, on_country_change: Callable[[str], None] | None = None):
@@ -72,6 +112,7 @@ class ViralTab(QWidget):
         self._videos_by_id: dict[str, dict] = {}   # nguồn dữ liệu chuẩn, dedup theo video_id
         self._videos: list[dict] = []
         self._tag_loader: HashtagLoader | None = None
+        self._cache_loader: CacheLoader | None = None
         self._hashtags_by_country = dict(cfg.get("hashtags_by_country") or {})
         self._refresh_timer = QTimer(self)
         self._refresh_timer.setSingleShot(True)
@@ -313,13 +354,31 @@ class ViralTab(QWidget):
         self._load_country_cache(self.cfg.get("country", "VN"))
 
     def _load_country_cache(self, country: str):
-        """Đổ video đã lưu trong kho của quốc gia vào bảng (mở app / đổi nước là có ngay)."""
+        """Đổ video đã lưu trong kho của quốc gia vào bảng trên luồng nền (mở app tức thì không bị đơ)."""
+        country = (country or "VN").upper()
         self._videos_by_id = {}
-        if self.video_store is not None:
-            for v in self.video_store.list(country):
-                vid = str(v.get("video_id") or "")
-                if vid:
-                    self._videos_by_id[vid] = enrich(v)
+        self._videos = []
+        self.table.set_videos([])
+        if self.video_store is None:
+            self._refresh()
+            return
+        if self._cache_loader and self._cache_loader.isRunning():
+            try:
+                self._cache_loader.done.disconnect()
+            except Exception:
+                pass
+        self.lbl_stats.setText(f"⏳ Đang nạp kho dữ liệu {country} trong nền...")
+        pending = [blob for (c, _vid), (blob, _ts) in self.video_store._pending.items() if c == country]
+        self._cache_loader = CacheLoader(self.video_store.db_path, country, pending, self)
+        self._cache_loader.done.connect(self._on_cache_loaded)
+        self._cache_loader.start()
+
+    def _on_cache_loaded(self, country: str, loaded: dict):
+        if (self.cbo_country.currentData() or "VN").upper() != country:
+            return
+        if self._videos_by_id:
+            loaded.update(self._videos_by_id)
+        self._videos_by_id = loaded
         self._refresh()
 
     # ──────────────────────────────────────────────────────────
@@ -768,3 +827,5 @@ class ViralTab(QWidget):
             self.worker.wait(8000)
         if self._tag_loader and self._tag_loader.isRunning():
             self._tag_loader.wait(3000)
+        if self._cache_loader and self._cache_loader.isRunning():
+            self._cache_loader.wait(3000)

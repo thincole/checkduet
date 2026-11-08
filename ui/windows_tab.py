@@ -70,7 +70,7 @@ class WindowsTab(QWidget):
         self.table.cellDoubleClicked.connect(self._open_row)
         self.table.setToolTip("Nhấp đúp để mở sản phẩm")
         root.addWidget(self.table)
-        self._update_info()
+        self.lbl_info.setText("Bấm '🔢 Đếm cửa sổ' để thống kê số cửa sổ sản phẩm từ kho dữ liệu.")
 
     # ──────────────────────────────────────────────────────────
     def _update_info(self):
