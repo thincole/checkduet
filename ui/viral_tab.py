@@ -330,13 +330,16 @@ class ViralTab(QWidget):
         btn_gsheet.setObjectName("btn_export")
         btn_gsheet.setToolTip("Ghi danh sách viral đang hiện vào Google Sheet (tab mới mỗi lần)")
         btn_gsheet.clicked.connect(self._export_gsheet)
+        btn_check_live = QPushButton("🍪 Check Live")
+        btn_check_live.setToolTip("Kiểm tra trực tiếp từng Cookie và Điện thoại SPSign xem còn LIVE hay đã DIE")
+        btn_check_live.clicked.connect(lambda: (self.get_runtime().get("check_cookies") or (lambda: None))())
         btn_del_no_sp = QPushButton("🗑 Xóa không link SP")
         btn_del_no_sp.setObjectName("btn_stop")
         btn_del_no_sp.setToolTip("Xóa toàn bộ các video không có link sản phẩm (Link SP trống)")
         btn_del_no_sp.clicked.connect(self._delete_no_product_videos)
         btn_row.addWidget(self.lbl_stats)
         btn_row.addStretch()
-        for b in (self.btn_start, self.btn_stop, btn_del_no_sp, btn_export, btn_gsheet):
+        for b in (btn_check_live, self.btn_start, self.btn_stop, btn_del_no_sp, btn_export, btn_gsheet):
             btn_row.addWidget(b)
         top_lay.addLayout(btn_row)
 

@@ -478,6 +478,124 @@ class ShopeeAPI:
             return True, json.dumps(data.get("data", data), ensure_ascii=False)
         return False, data.get("msg") or f"HTTP {resp.status_code}"
 
+    def check_cookies_live(self, sample_profile_id: str = "") -> dict:
+        """
+        Kiểm tra trực tiếp từng cookie trong self.cookies xem có gọi được API Shopee Video (/timeline/me) không.
+        Trả về dict:
+          - phones: danh sách điện thoại SPSign đang kết nối
+          - results: list[dict] cho từng cookie (index, cookie, uid, username, type, live, reason)
+          - live_cookies: list[str] các cookie còn sống
+          - dead_cookies: list[str] các cookie đã chết / bị Captcha
+        """
+        from concurrent.futures import ThreadPoolExecutor
+
+        phones = []
+        if self.is_phone_sign() or not self.sign_api_key:
+            try:
+                phones = self.discover_all_spsign_phones()
+            except Exception:
+                phones = []
+        active_phones = [p for p in phones if p.get("active")]
+
+        default_probes = {
+            "PH": "1299436505",
+            "VN": "957965727",
+            "SG": "100662535",
+            "MY": "100012345",
+            "TH": "100012345",
+            "ID": "100012345",
+            "TW": "100012345",
+            "BR": "100012345",
+        }
+        probe_id = (sample_profile_id or "").strip()
+        if not probe_id or not probe_id.isdigit():
+            probe_id = default_probes.get(self.country, "1299436505")
+
+        def _test_one(idx_ck):
+            idx, ck = idx_ck
+            m_uid = re.search(r"(?:SPC_U|userid)=([^;\s]+)", ck)
+            uid = m_uid.group(1) if m_uid else ""
+            m_usr = re.search(r"username=([^;\s]+)", ck)
+            uname = m_usr.group(1) if m_usr else ""
+            is_mobile = "shopee_token=" in ck
+            ctype = "📱 Mobile App" if is_mobile else "🌐 Web Browser"
+
+            if not uname:
+                try:
+                    r_acc = requests.get(
+                        f"{self.base_host}/api/v4/account/basic/get_account_info",
+                        headers=web_headers(ck, self.country),
+                        timeout=8,
+                    ).json()
+                    acc_data = r_acc.get("data") or {}
+                    if isinstance(acc_data, dict) and acc_data.get("username"):
+                        uname = str(acc_data.get("username"))
+                except Exception:
+                    pass
+
+            sign_url = (
+                active_phones[idx % len(active_phones)]["base_url"]
+                if active_phones else self.sign_api_url
+            )
+            sub_api = ShopeeAPI(
+                cookie=ck,
+                delay_ms=100,
+                sign_api_key=self.sign_api_key,
+                sign_api_url=sign_url,
+                country=self.country,
+            )
+            req_uid = probe_id or uid or "1299436505"
+            url = (
+                f"{sub_api.sv_host}/api/v2/timeline/me?limit=12&page_context="
+                f"&request_user_id={req_uid}&need_total_count=0&need_product_v2=true"
+            )
+            data, prob = sub_api._signed_get_once(url, f"check_live_{idx + 1}")
+            if data is not None:
+                return {
+                    "index": idx + 1,
+                    "cookie": ck,
+                    "uid": uid,
+                    "username": uname or uid or f"cookie_{idx + 1}",
+                    "type": ctype,
+                    "is_mobile": is_mobile,
+                    "live": True,
+                    "reason": "Hoạt động tốt (LIVE)",
+                }
+            else:
+                short_reason = prob or sub_api.last_error or "Lỗi không xác định"
+                if prob == "captcha" and not is_mobile:
+                    short_reason = "Cookie Web bị chặn Captcha Video (90309999) — cần dùng Cookie Mobile App"
+                elif prob == "captcha":
+                    short_reason = "Bị Captcha ở mục Live & Video trên điện thoại"
+                elif prob == "hết hạn":
+                    short_reason = "Đã hết hạn đăng nhập (is_login=False)"
+                return {
+                    "index": idx + 1,
+                    "cookie": ck,
+                    "uid": uid,
+                    "username": uname or uid or f"cookie_{idx + 1}",
+                    "type": ctype,
+                    "is_mobile": is_mobile,
+                    "live": False,
+                    "reason": short_reason,
+                }
+
+        results = []
+        if self.cookies:
+            max_w = min(8, len(self.cookies))
+            with ThreadPoolExecutor(max_workers=max_w) as ex:
+                results = list(ex.map(_test_one, enumerate(self.cookies)))
+
+        live_cookies = [r["cookie"] for r in results if r["live"]]
+        dead_cookies = [r["cookie"] for r in results if not r["live"]]
+        return {
+            "phones": phones,
+            "active_phones": active_phones,
+            "results": results,
+            "live_cookies": live_cookies,
+            "dead_cookies": dead_cookies,
+        }
+
     # ------------------------------------------------------------------
     # Resolve short link / profile / username → profile_id
     # ------------------------------------------------------------------

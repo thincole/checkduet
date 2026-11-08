@@ -183,6 +183,7 @@ class MainWindow(QMainWindow):
             "gsheet_credentials": self.txt_gsheet_cred.text().strip(),
             "gsheet_sheet":       self.txt_gsheet_sheet.text().strip(),
             "gsheet_tab":         self.txt_gsheet_tab.text().strip() or (country or "VN"),
+            "check_cookies":      self._check_cookies_live,
         }
 
     # ──────────────────── Tab Scanner ─────────────────────────
@@ -385,8 +386,13 @@ class MainWindow(QMainWindow):
         btn_cookie_phone = QPushButton("📲 Lấy Cookie từ Điện thoại (SPSign)")
         btn_cookie_phone.setToolTip("Tự động lấy cookie sạch đang đăng nhập trong app Shopee trên điện thoại qua ADB + SPSign")
         btn_cookie_phone.clicked.connect(self._load_cookie_from_phone)
+        btn_check_cookies = QPushButton("🔍 Check Live Cookie")
+        btn_check_cookies.setObjectName("btn_export")
+        btn_check_cookies.setToolTip("Kiểm tra trực tiếp toàn bộ các Cookie và Điện thoại SPSign xem còn LIVE hay đã DIE")
+        btn_check_cookies.clicked.connect(self._check_cookies_live)
         ck_btn_row.addWidget(btn_cookie_file)
         ck_btn_row.addWidget(btn_cookie_phone)
+        ck_btn_row.addWidget(btn_check_cookies)
         ck_btn_row.addStretch()
         form.addRow("", ck_btn_row)
 
@@ -678,6 +684,9 @@ class MainWindow(QMainWindow):
         for ck in existing:
             if ck in new_cookies:
                 continue
+            # Bỏ qua cookie Web cũ (không có shopee_token=) vì sẽ bị chặn Captcha 90309999 trên /timeline/me
+            if "shopee_token=" not in ck:
+                continue
             m_old = re.search(r"(?:SPC_U|userid)=(\d+)", ck)
             if m_old and m_old.group(1) in new_uids:
                 continue
@@ -687,15 +696,89 @@ class MainWindow(QMainWindow):
         all_cookies = new_cookies + kept
         new_text = "\n".join(all_cookies).strip()
         self.txt_cookie.setPlainText(new_text)
-        if hasattr(self, "viral_tab") and hasattr(self.viral_tab, "spin_threads") and len(all_cookies) > 1:
-            self.viral_tab.spin_threads.setValue(max(self.viral_tab.spin_threads.value(), len(all_cookies)))
+        if hasattr(self, "viral_tab") and hasattr(self.viral_tab, "spin_threads") and len(all_cookies) >= 1:
+            self.viral_tab.spin_threads.setValue(len(all_cookies))
         self._save_settings()
         pkg = ShopeeAPI.COUNTRY_PKG_MAP.get(self._active_country, f"com.shopee.{self._active_country.lower()}")
         QMessageBox.information(
             self, "Lấy Cookie từ Điện thoại thành công",
             f"✅ Đã lấy {len(new_cookies)} Cookie từ ứng dụng {pkg} ({self._active_country}) "
-            f"(Tổng: {len(all_cookies)} cookie):\n\n{report}"
+            f"(Tổng: {len(all_cookies)} cookie Mobile):\n\n{report}"
         )
+
+    def _check_cookies_live(self):
+        rt = self._runtime()
+        cookie_text = rt["cookie"]
+        cookies = parse_cookies(cookie_text)
+        if not cookies:
+            QMessageBox.warning(self, "Chưa có Cookie", "Chưa có Cookie nào trong mục Cài đặt để kiểm tra!")
+            return
+
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            api = ShopeeAPI(
+                cookie=cookie_text,
+                sign_api_key=rt["sign_api_key"],
+                sign_api_url=rt["sign_api_url"],
+                country=self._active_country,
+            )
+            info = api.check_cookies_live()
+        finally:
+            QApplication.restoreOverrideCursor()
+
+        results = info.get("results") or []
+        live_list = info.get("live_cookies") or []
+        dead_list = info.get("dead_cookies") or []
+        phones = info.get("phones") or []
+        active_phones = info.get("active_phones") or []
+
+        lines = []
+        if phones:
+            lines.append(f"📱 ĐIỆN THOẠI SPSIGN ĐANG KẾT NỐI ({len(active_phones)}/{len(phones)} máy LIVE):")
+            for p in phones:
+                st = "✅ LIVE" if p.get("active") else "⚠️ Chưa bật SPSign"
+                lines.append(f"  • Máy {p.get('serial')} (:{p.get('local_port')}) — {st}")
+        else:
+            lines.append("📱 ĐIỆN THOẠI SPSIGN: Không phát hiện điện thoại nào đang cắm ADB!")
+        lines.append("")
+        lines.append(
+            f"🍪 KẾT QUẢ KIỂM TRA COOKIE ({self._active_country}): "
+            f"✅ LIVE: {len(live_list)}/{len(results)}  |  ❌ DIE: {len(dead_list)}/{len(results)}"
+        )
+        lines.append("─" * 55)
+        for r in results:
+            icon = "✅ LIVE" if r["live"] else "❌ DIE"
+            lines.append(
+                f"{icon} — Cookie #{r['index']} [{r['type']}] (User: {r['username']} | UID={r['uid']}):\n"
+                f"      → {r['reason']}"
+            )
+
+        box = QMessageBox(self)
+        box.setWindowTitle(f"Kiểm tra Live Cookie & Điện thoại ({self._active_country})")
+        box.setText("\n".join(lines))
+
+        btn_clean = None
+        if dead_list:
+            btn_clean = box.addButton(
+                f"🧹 Xóa {len(dead_list)} Cookie DIE (chỉ giữ {len(live_list)} Cookie LIVE)",
+                QMessageBox.ButtonRole.AcceptRole,
+            )
+        btn_pull = box.addButton("📲 Lấy lại Cookie từ Điện thoại", QMessageBox.ButtonRole.ActionRole)
+        box.addButton("Đóng", QMessageBox.ButtonRole.RejectRole)
+        box.exec()
+
+        clicked = box.clickedButton()
+        if btn_clean and clicked == btn_clean:
+            new_text = "\n".join(live_list).strip()
+            self.txt_cookie.setPlainText(new_text)
+            if hasattr(self, "viral_tab") and hasattr(self.viral_tab, "spin_threads") and len(live_list) >= 1:
+                self.viral_tab.spin_threads.setValue(len(live_list))
+            self._save_settings()
+            self.status.showMessage(
+                f"🧹 Đã xóa {len(dead_list)} cookie DIE, giữ lại {len(live_list)} cookie LIVE.", 5000
+            )
+        elif clicked == btn_pull:
+            self._load_cookie_from_phone()
 
     def _use_phone_sign(self):
         self.txt_sign_url.setText(PHONE_SIGN_URL)
