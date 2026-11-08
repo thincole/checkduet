@@ -33,6 +33,7 @@ class VideoStore:
         )
         self._conn.commit()
         self._pending: dict[tuple, tuple] = {}   # (country, vid) → (data_json, ts); gom lại, flush định kỳ
+        self._pending_creators: dict[tuple, tuple] = {}   # (country, pid) → (video_count, ts)
         self._last_save_ts = time.time()
         self._saved_since_ckpt = 0
         self._migrate_json()
@@ -77,7 +78,7 @@ class VideoStore:
         return out
 
     def add_video(self, v: dict, country: str) -> bool:
-        """Thêm/cập nhật 1 video vào bộ đệm và tự động ghi xuống đĩa mỗi 100 video hoặc mỗi 30 giây."""
+        """Thêm/cập nhật 1 video vào bộ đệm và tự động ghi xuống đĩa mỗi 2000 video hoặc mỗi 5 phút (300s)."""
         vid = str(v.get("video_id") or "")
         if not vid:
             return False
@@ -85,13 +86,15 @@ class VideoStore:
         key = (cc, vid)
         now = time.time()
         self._pending[key] = (json.dumps(v, ensure_ascii=False), now)
-        if len(self._pending) >= 100 or (now - self._last_save_ts) >= 30.0:
+        if len(self._pending) >= 2000 or (now - self._last_save_ts) >= 300.0:
             self.save()
         return True
 
-    def maybe_save(self, max_items: int = 100, max_age_sec: float = 30.0):
-        """Ghi xuống đĩa nếu đã đủ 100 video mới hoặc đã qua 30 giây."""
-        if self._pending and (len(self._pending) >= max_items or (time.time() - self._last_save_ts) >= max_age_sec):
+    def maybe_save(self, max_items: int = 2000, max_age_sec: float = 300.0):
+        """Ghi xuống đĩa nếu đã đủ 2000 video mới hoặc đã qua 5 phút (300 giây)."""
+        if (self._pending or self._pending_creators) and (
+            len(self._pending) >= max_items or (time.time() - self._last_save_ts) >= max_age_sec
+        ):
             self.save()
 
     def _exists(self, cc: str, vid: str) -> bool:
@@ -105,16 +108,24 @@ class VideoStore:
         return n
 
     def save(self):
-        if not self._pending:
+        if not self._pending and not self._pending_creators:
             return
-        rows = [(vid, cc, blob, ts) for (cc, vid), (blob, ts) in self._pending.items()]
-        self._conn.executemany(
-            "INSERT OR REPLACE INTO videos(video_id, country, data, updated) VALUES (?,?,?,?)", rows)
+        if self._pending:
+            rows = [(vid, cc, blob, ts) for (cc, vid), (blob, ts) in self._pending.items()]
+            self._conn.executemany(
+                "INSERT OR REPLACE INTO videos(video_id, country, data, updated) VALUES (?,?,?,?)", rows)
+            self._saved_since_ckpt += len(rows)
+            self._pending.clear()
+        if self._pending_creators:
+            c_rows = [(cc, pid, cnt, ts) for (cc, pid), (cnt, ts) in self._pending_creators.items()]
+            self._conn.executemany(
+                "INSERT OR REPLACE INTO scanned_creators(country, profile_id, video_count, updated) VALUES (?,?,?,?)",
+                c_rows
+            )
+            self._pending_creators.clear()
         self._conn.commit()
-        self._saved_since_ckpt += len(rows)
-        self._pending.clear()
         self._last_save_ts = time.time()
-        if self._saved_since_ckpt >= 1000:
+        if self._saved_since_ckpt >= 2000:
             try:
                 self._conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
             except Exception:
@@ -147,22 +158,23 @@ class VideoStore:
         self._conn.commit()
 
     def mark_creator_scanned(self, profile_id: str, country: str, video_count: int = 0):
-        """Đánh dấu 1 Profile ID đã cào xong để các phiên sau không cào trùng lại."""
+        """Đánh dấu 1 Profile ID đã cào xong vào bộ đệm (flush xuống đĩa cùng đợt 2000 video / 5 phút)."""
         pid = str(profile_id or "").strip()
         if not pid:
             return
         cc = (country or "VN").upper()
-        self._conn.execute(
-            "INSERT OR REPLACE INTO scanned_creators(country, profile_id, video_count, updated) VALUES (?,?,?,?)",
-            (cc, pid, int(video_count or 0), time.time())
-        )
-        self._conn.commit()
+        self._pending_creators[(cc, pid)] = (int(video_count or 0), time.time())
+        self.maybe_save()
 
     def get_scanned_creators(self, country: str) -> set[str]:
         """Lấy tập hợp các Profile ID đã cào xong của quốc gia này."""
         cc = (country or "VN").upper()
         cur = self._conn.execute("SELECT profile_id FROM scanned_creators WHERE country=?", (cc,))
-        return {str(r[0]) for r in cur if r[0]}
+        out = {str(r[0]) for r in cur if r[0]}
+        for (c, pid) in self._pending_creators:
+            if c == cc and pid:
+                out.add(str(pid))
+        return out
 
     def close(self):
         self.save()
